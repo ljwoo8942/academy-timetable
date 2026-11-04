@@ -1,0 +1,1 @@
+"""Academy Timetable desktop application."""
