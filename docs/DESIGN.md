@@ -1,12 +1,12 @@
 # 재수종합반 시간표 관리 시스템 — 상세 설계서
 
-- 문서 버전: 2.1
+- 문서 버전: 2.2
 - 작성일: 2026-11-04
 - 상태: Python 데스크톱 설계안 (구현 전)
 - 프로젝트: academy-timetable
 - 기반 운영 모델: 종로학원 재수종합반과 유사한 **반·요일·교시 중심 운영**
 - 편성 방식: **수동 배치 + 자동 최적화 혼합형**
-- 운영 형태: **Windows PC 우선 / Python 오프라인 데스크톱 프로그램**
+- 운영 형태: **Windows 및 macOS 동등 지원 / Python 오프라인 GUI 데스크톱 프로그램**
 - UI: **GUI 우선(PySide6), 일반 사용자 터미널 명령 불필요**
 
 > 주의: 이 문서는 공개적으로 알려진 재수종합반의 교시제 운영 방식을 참고한 독립 소프트웨어 설계안입니다. 종로학원의 공식 시스템이나 내부 업무 규칙을 재현했다고 주장하지 않습니다. 실제 교시 시간, 시수, 캠퍼스 규칙은 운영자가 직접 설정합니다. 예시 데이터는 모두 가상입니다.
@@ -15,7 +15,7 @@
 
 ### 1.1 목표
 
-학원 관리자가 설치형 Python 프로그램에서 학기별로 반, 교시, 과목별 시수, 강사, 강의실, 선택수업을 정의하고 다음 작업을 수행한다. 기본 기능은 인터넷 연결 없이 작동한다.
+학원 관리자가 **Windows 또는 macOS의 설치형 Python GUI 프로그램**에서 학기별로 반, 교시, 과목별 시수, 강사, 강의실, 선택수업을 정의하고 다음 작업을 수행한다. 양쪽 운영체제에서 인터넷 연결 없이 동일한 핵심 기능을 제공한다.
 
 1. 반별 주간 시간표를 수동으로 작성한다.
 2. 수업 블록을 잠가 자동 편성에서 보호한다.
@@ -232,7 +232,7 @@ flowchart TD
 - 저장되지 않은 변경이 있을 때 학기 전환/창 종료 전에 저장·버리기·취소를 확인한다.
 - 삭제·대규모 재편성·시간표 확정·DB 복원 전 영향 범위와 확인 대화상자를 표시한다.
 - 충돌 발생 시 관련 반·강사·교시·강의실 및 해결 방향을 한국어로 안내한다.
-- Windows 실행 파일을 더블클릭하면 별도 콘솔 창 없이 GUI가 열리는 형태로 패키징한다.
+- Windows는 .exe(또는 설치 프로그램), macOS는 .app을 더블클릭하면 별도 터미널 창 없이 GUI가 열리는 형태로 패키징한다.
 - 편성은 백그라운드에서 실행하고 완료·실패·취소를 Qt Signal로 표시한다.
 
 ### 5.4 엑셀 저장 GUI 상세
@@ -409,7 +409,7 @@ DRAFT -> VALIDATING -> READY -> PUBLISHED -> ARCHIVED
 | 계산 작업 | QThread/Worker 또는 별도 프로세스 | UI 멈춤 방지 |
 | Excel | openpyxl | XLSX 출력 |
 | PDF/인쇄 | PySide6 QPrinter, QPrintPreviewDialog | PDF·인쇄 |
-| 배포 | PyInstaller | Windows 실행 파일(후속) |
+| 배포 | PyInstaller | Windows .exe 및 macOS .app 각각 빌드·배포 |
 | 테스트 | pytest, pytest-qt(선택) | 규칙·화면 테스트 |
 
 **React, TypeScript, Node.js, FastAPI 서버, PostgreSQL, REST API를 MVP에 사용하지 않는다.** 하나의 로컬 Python 애플리케이션이 화면 → 서비스 → DB 및 최적화 엔진을 직접 호출한다.
@@ -426,7 +426,7 @@ Service / Validation
 ~~~
 
 **로컬 저장/백업**
-- DB 경로는 사용자별 OS 앱 데이터 경로(Windows 예: %LOCALAPPDATA%/AcademyTimetable)에 둔다.
+- DB 경로는 PySide6의 QStandardPaths.AppLocalDataLocation 등 플랫폼 표준 **사용자별 앱 데이터 디렉터리**를 사용한다(예: Windows 사용자 AppData, macOS ~/Library/Application Support 아래). 실제 경로는 앱 이름/설정에 따라 결정한다.
 - 일관성 있는 백업은 sqlite3 Connection.backup()을 사용한다. 실행 중 DB 파일을 단순 복사하지 않는다.
 - 복원 전에 DB 연결을 닫고 현재 데이터를 별도 백업한다.
 - 동시 PC 접속용 네트워크 드라이브/클라우드 동기화 폴더에 DB 원본을 두지 않는다.
@@ -712,18 +712,59 @@ academy-timetable/
 │   ├── integration/
 │   └── gui/
 └── packaging/
-    └── pyinstaller.spec             # 실행 파일 배포 (후속)
+    ├── pyinstaller.spec             # 공통 빌드 설정 (후속)
+    ├── build_windows.py             # Windows 빌드 실행 (후속)
+    └── build_macos.py               # macOS 빌드 실행 (후속)
 ~~~
 
 위 파일 트리는 **개발 목표**이며 소스 파일을 실제 생성했다는 의미는 아니다.
 
-### 13.1 개발·배포
+### 13.1 지원 운영체제 및 설치 방식
 
-- 개발 환경: Python 가상환경, python -m academy_timetable 진입점.
-- Windows 배포 우선: PyInstaller 폴더 배포 형태로 빌드, 필요 시 단일 exe 검토.
-- macOS 실행은 별도 빌드/테스트로 후속 지원 가능. Windows exe는 Windows에서 빌드한다.
-- 앱 데이터(데이터베이스·설정·로그)는 설치 폴더가 아닌 사용자 데이터 디렉터리에 둔다.
-- 첫 실행 시 DB 스키마 생성/마이그레이션. 샘플 데이터는 명시적 메뉴에서만 추가한다.
+**Windows와 macOS를 첫 정식 릴리스부터 모두 지원 대상으로 설정한다.** GUI와 업무 로직은 하나의 Python 코드베이스를 공유하고, 운영체제별 실행 패키지만 개별 제작한다.
+
+| 구분 | Windows | macOS |
+| --- | --- | --- |
+| 지원 대상 | Windows 10/11 64비트(세부 최소 버전은 의존성 검증 후 확정) | macOS, Apple Silicon(arm64) 및 Intel(x86_64) 지원 목표(최소 버전 검증 후 확정) |
+| UI | 동일한 PySide6 창/시간표 기능 | 동일한 PySide6 창/시간표 기능 |
+| 배포 산출물 | .exe 또는 설치 프로그램 | .app, 선택적으로 .dmg |
+| 실행 방법 | 파일/바로가기 더블클릭 | Finder에서 앱 더블클릭 |
+| 데이터 위치 | 사용자 AppData의 앱 전용 폴더 | ~/Library/Application Support의 앱 전용 폴더 |
+| 파일 저장 | QFileDialog로 경로 선택 | QFileDialog로 경로 선택 |
+| 주요 단축키 | Ctrl 계열 | Command(⌘) 계열 |
+| 필수 기능 | 수동/자동 편성, SQLite, XLSX, PDF, 백업 | 동일 |
+
+- 개발 환경에서는 각 플랫폼의 가상환경에서 Python 모듈로 실행하고, 일반 사용자에게는 Python/터미널 설치를 요구하지 않는 앱 배포를 목표로 한다.
+- **PyInstaller는 운영체제별 네이티브 빌드가 필요하다.** Windows .exe는 Windows에서, macOS .app은 macOS에서 각각 빌드·검증한다. macOS Intel 및 Apple Silicon 아키텍처별 의존성 휠 호환성과 필요 시 아키텍처별 앱 빌드를 검토한다.
+- macOS 배포 시 Gatekeeper 경고를 줄이기 위한 Apple Developer ID 코드 서명과 공증(notarization), 필요 시 .dmg 포장을 배포 단계에서 검토한다. 테스트용 앱과 외부 배포용 앱의 요구사항을 구분한다.
+- Windows 서명은 외부 배포 시 신뢰도 확보를 위한 선택 사항으로 검토한다.
+- 처음 실행 시 로컬 데이터베이스/설정 폴더를 생성하고 마이그레이션한다. 시스템 설치 디렉터리나 .app 패키지 내부에 사용자 DB를 저장하지 않는다.
+- 프로그램 내부에 운영체제별 절대 경로, 슬래시, 글꼴 경로, EXE 확장자를 하드코딩하지 않고 pathlib 및 Qt 플랫폼 API를 사용한다.
+- 오프라인 동작을 유지한다. 인터넷 연결은 핵심 시간표 편성·저장·XLSX/PDF 출력에 필요하지 않다.
+
+### 13.2 OS별 GUI와 파일 처리 설계
+
+- PySide6의 `QKeySequence.StandardKey`를 사용하여 저장·복사·붙여넣기·실행 취소 등 표준 단축키가 Windows에서는 Ctrl, macOS에서는 Command(⌘)로 자연스럽게 동작하도록 한다.
+- Qt 네이티브 파일 대화상자(`QFileDialog`)로 열기·저장·엑셀 출력·백업 경로를 선택한다. macOS에서는 Finder 스타일 파일 선택창을 사용한다.
+- 플랫폼별 메뉴바 배치(Windows 앱 창 / macOS 시스템 메뉴바)와 종료/설정 메뉴 차이를 Qt 표준 방식으로 처리한다.
+- Windows DPI 배율과 macOS Retina 배율, 라이트/다크 모드, 시스템 폰트/한글 표시를 GUI 테스트에 포함한다.
+- 로컬 저장 경로는 QStandardPaths로 얻고, Path 객체로 조작한다. 백업 파일은 사용자가 선택한 경로에 저장한다.
+- SQLite DB 및 설정·로그는 각 OS 사용자별 앱 데이터 디렉터리에 분리 저장한다. OS별 경로가 달라도 데이터 스키마와 백업 파일 포맷은 동일하게 유지한다.
+- Windows에서 생성한 백업 DB를 macOS에서 복원하거나 반대로 복원할 때 동일 앱 스키마 버전이라면 데이터가 유지되도록 설계하고 교차 복원 테스트를 실시한다.
+- XLSX 및 PDF 파일은 두 OS에서 **동일한 시트·셀 값과 출력 구조**가 생성되어야 한다. 시스템 글꼴 차이로 발생하는 인쇄 레이아웃 차이는 실제 PDF/인쇄 테스트로 확인한다.
+
+### 13.3 릴리스 및 호환성 검증
+
+| 검증 환경 | 필수 점검 |
+| --- | --- |
+| Windows x64 | 실행, Qt GUI, SQLite CRUD, CP-SAT 자동 편성, XLSX/PDF 출력, 백업/복원 |
+| macOS Apple Silicon arm64 | .app 실행, 파일 접근, GUI, CP-SAT, XLSX/PDF, 백업/복원 |
+| macOS Intel x86_64 | 별도 빌드/호환성 확인, GUI 및 동일 주요 기능 테스트 |
+| 플랫폼 간 데이터 이동 | Windows ↔ macOS SQLite 백업 복원, 한글 데이터 및 시수·배정 보존 |
+
+- Python/PySide6/OR-Tools/openpyxl/PyInstaller의 실제 지원 OS·CPU·Python 버전 조합을 고정하기 전에 테스트하고 의존성 버전을 잠근다.
+- 최소 지원 OS 버전은 패키지 호환성 확인 후 `README.md` 및 릴리스 노트에 명시한다.
+- Windows/Mac 각각에서 별도로 빌드하고 실행 테스트를 거쳐 배포한다. 아직 앱과 배포 산출물은 구현하지 않았다.
 
 ## 14. 개발 단계 및 완료 기준
 
@@ -736,7 +777,7 @@ academy-timetable/
 | M5 | 혼합 편성 검토 | 제안 비교·적용·부분 재편성·undo |
 | M6 | 확정·버전 관리·출력 | 운영본 보호, 게시, 복원, 출력 |
 | M7 | 선택수업·예외 일정 | 학생 그룹/휴강/보강/모의고사 처리 |
-| M8 | 운영 고도화 | 권한, 배포, 관측, 성능 개선 |
+| M8 | Windows/macOS 배포 및 운영 고도화 | Windows .exe·macOS .app 각각 빌드, OS별 설치/실행/출력 검증, 성능 개선 |
 
 ### 14.1 핵심 테스트 케이스
 
@@ -756,6 +797,10 @@ academy-timetable/
 14. **백업·복원**: 일관성 있는 DB 백업을 만들고 복원 이전 원본을 보존한다.
 15. **오프라인**: 인터넷 없이 등록·수동/자동 편성·출력이 작동한다.
 16. **엑셀 출력**: 모든 반·강사·강의실별 편집 가능한 .xlsx와 인쇄 설정을 검증한다.
+17. **Windows/macOS 동등 기능**: 두 OS에서 GUI 편집, 수동/자동 편성, Excel/PDF 출력, 백업/복원 결과가 일치한다.
+18. **OS별 실행 파일**: Windows .exe와 macOS .app을 각각 실행해 터미널 없이 창이 열리는지 확인한다.
+19. **데이터 이식성**: Windows에서 백업한 SQLite를 macOS에서 복원하고 반대 방향도 테스트한다.
+20. **단축키·고해상도**: Ctrl/Command 표준 단축키, Windows 배율, macOS Retina 및 한글 UI를 확인한다.
 
 ### 14.2 품질 및 보안
 
@@ -776,7 +821,7 @@ academy-timetable/
 - **강사·반·학생·강의실 중복 검증**
 - **초안과 게시본 분리**
 - **Python + PySide6 + SQLite + OR-Tools**를 기본 스택으로 사용
-- **Windows PC용 설치형 오프라인 프로그램** 우선
+- **Windows와 macOS를 모두 지원하는 설치형 오프라인 GUI 프로그램** (동일 코드베이스, 플랫폼별 빌드)
 - **웹 UI·REST API·웹 서버 없이 로컬 Python 함수 호출**
 
 ### 구현 전에 결정할 항목
@@ -789,6 +834,7 @@ academy-timetable/
 - 인쇄·파일 공유 외 별도 학생/학부모 조회 도구의 도입 여부
 - 인쇄 레이아웃 및 파일 양식
 - 자동 편성 성능 목표를 검증할 샘플 데이터 규모
+- Windows/macOS의 최소 지원 버전 및 macOS Intel/Apple Silicon 별 빌드 범위 확정
 
 ## 16. 참고 자료
 
