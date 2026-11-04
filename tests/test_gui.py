@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6.QtWidgets import QApplication, QInputDialog, QMessageBox
+from PySide6.QtWidgets import QApplication, QDialog, QInputDialog, QMessageBox
 
 from academy_timetable.__main__ import MainWindow
 from academy_timetable.db import Database
@@ -54,6 +54,35 @@ class GuiTests(unittest.TestCase):
         self.assertEqual(self.db.periods(first)[0], ("08:20", "09:20"))
         self.window.term.setCurrentIndex(1)
         self.assertEqual(self.window.period_table.item(0, 0).text(), "08:30")
+
+    def test_schedule_page_quota_lesson_and_lock(self):
+        term = self.window.term.currentData()
+        self.db.add("cohorts", "A반", term)
+        self.db.add("subjects", "수학")
+        self.db.add("teachers", "강사")
+        self.window.refresh_all()
+        self.window.nav.button(6).click()
+        page = self.window.schedule_page
+        with patch.object(QDialog, "exec", return_value=QDialog.DialogCode.Accepted):
+            page.edit_quota()
+            page.grid.setCurrentCell(0, 0)
+            page.edit_lesson()
+        self.assertEqual(page.quota_table.item(0, 2).text(), "2 / 0")
+        self.assertEqual(page.grid.item(0, 0).data(256), page.grid.item(1, 0).data(256))
+        page.grid.setCurrentCell(1, 0)
+        page.toggle_lock()
+        self.assertTrue(page.selected_lesson()[7])
+        with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes), \
+             patch.object(QMessageBox, "warning") as warning:
+            page.delete_lesson()
+        warning.assert_called_once()
+        self.assertEqual(len(page.schedule.lessons(page.cohort.currentData())), 1)
+        self.window.nav.button(7).click()
+        load_table = self.window.teacher_load_page.table
+        self.assertEqual(load_table.item(0, 1).text(), "2")
+        self.assertEqual(load_table.item(1, 2).text(), "2")
+        self.window.term.setCurrentIndex(1)
+        self.assertEqual(load_table.item(0, 1).text(), "0")
 
 
 if __name__ == "__main__":
