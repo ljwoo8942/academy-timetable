@@ -1,12 +1,15 @@
+import os
 import sys
 from pathlib import Path
 
 from PySide6.QtCore import QStandardPaths, Qt
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QFrame, QHBoxLayout,
-                               QInputDialog, QLabel, QListWidget, QListWidgetItem, QMainWindow,
+                               QFileDialog, QInputDialog, QLabel, QListWidget, QListWidgetItem, QMainWindow,
                                QMessageBox, QPushButton, QStackedWidget, QTableWidget,
                                QTableWidgetItem, QVBoxLayout, QWidget)
 from .db import Database
+from .excel_export import export_timetable
+from .import_ui import ImportDialog
 from .schedule_ui import SchedulePage, TeacherAvailabilityPage, TeacherLoadPage
 
 
@@ -112,8 +115,14 @@ class MainWindow(QMainWindow):
         body.setContentsMargins(24, 22, 24, 18)
         body.setSpacing(14)
         top = QHBoxLayout()
-        top.addWidget(QLabel("ACADEMY  /  시간표 관리", objectName="eyebrow"))
+        top.addWidget(QLabel("시간표 관리", objectName="eyebrow"))
         top.addStretch()
+        import_button = QPushButton("엑셀 가져오기")
+        import_button.clicked.connect(self.import_excel)
+        top.addWidget(import_button)
+        export_button = QPushButton("엑셀 내보내기")
+        export_button.clicked.connect(self.export_excel)
+        top.addWidget(export_button)
         top.addWidget(QLabel("학기", objectName="muted"))
         self.term = QComboBox()
         self.term.setAccessibleName("선택 학기")
@@ -149,6 +158,36 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("수동 편성: 반·강사·강의실 중복과 강사 불가 시간 검사 · 교과별 규칙·자동 편성·확정은 미지원")
         self.refresh_all()
         self.show_page(2)
+
+    def export_excel(self):
+        if self.term.currentData() is None:
+            QMessageBox.information(self, "학기 선택", "먼저 학기를 선택하세요.")
+            return
+        if self.period_dirty and QMessageBox.question(
+            self, "저장되지 않은 교시표", "교시표에 저장되지 않은 변경이 있습니다. 마지막으로 저장한 시간으로 내보내시겠습니까?"
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "시간표 초안 엑셀 저장", "시간표_초안.xlsx",
+                                               "Excel 파일 (*.xlsx)", options=QFileDialog.Option.DontConfirmOverwrite)
+        if not path:
+            return
+        if not Path(path).suffix:
+            path += ".xlsx"
+        if Path(path).suffix.lower() != ".xlsx":
+            QMessageBox.warning(self, "저장 실패", "파일 확장자는 .xlsx여야 합니다.")
+            return
+        if os.path.lexists(path) and QMessageBox.question(self, "파일 덮어쓰기", "같은 이름의 파일이 있습니다. 덮어쓰시겠습니까?") != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            export_timetable(self.db, self.term.currentData(), path)
+            QMessageBox.information(self, "저장 완료", "시간표 초안을 엑셀 파일로 저장했습니다.")
+        except Exception as exc:
+            QMessageBox.warning(self, "저장 실패", f"엑셀 파일을 저장하지 못했습니다.\n{exc}")
+
+    def import_excel(self):
+        dialog = ImportDialog(self, self.db, self.term.currentData())
+        if dialog.exec() == dialog.DialogCode.Accepted:
+            self.refresh_all()
 
     def make_list_page(self, table, title):
         card = QFrame(objectName="card")
