@@ -47,6 +47,38 @@ class Schedule:
                 raise ValueError("배정된 수업을 먼저 삭제하세요.")
             self.conn.execute("DELETE FROM quotas WHERE cohort_id=? AND subject_id=?", (cohort_id, subject_id))
 
+    def availability(self, term_id, teacher_id):
+        return self.conn.execute("""SELECT weekday, period, status FROM teacher_availability
+            WHERE term_id=? AND teacher_id=? ORDER BY weekday, period""", (term_id, teacher_id)).fetchall()
+
+    def set_availability(self, term_id, teacher_id, cells, status):
+        cells = set(cells)
+        if status not in ("AVAILABLE", "UNAVAILABLE", "UNSET") or not cells or any(
+            day not in range(5) or period not in range(1, 12) for day, period in cells
+        ):
+            raise ValueError("요일, 교시 및 가능 상태를 확인하세요.")
+        with self.transaction():
+            if not self.conn.execute("SELECT 1 FROM terms WHERE id=?", (term_id,)).fetchone() or not self.conn.execute(
+                "SELECT 1 FROM teachers WHERE id=?", (teacher_id,)
+            ).fetchone():
+                raise ValueError("학기와 강사를 선택하세요.")
+            if status == "UNAVAILABLE":
+                for day, period in cells:
+                    lesson = self.conn.execute("""SELECT c.name, l.start_period, l.length FROM lessons l
+                        JOIN cohorts c ON c.id=l.cohort_id WHERE c.term_id=? AND l.teacher_id=?
+                        AND l.weekday=? AND l.start_period<=? AND l.start_period+l.length>? LIMIT 1""",
+                        (term_id, teacher_id, day, period, period)).fetchone()
+                    if lesson:
+                        raise ValueError(f"{('월', '화', '수', '목', '금')[day]}요일 {period}교시에 {lesson[0]}의 수업이 이미 배정되어 있습니다. 먼저 수업을 이동하거나 삭제하세요.")
+            for day, period in cells:
+                if status == "UNSET":
+                    self.conn.execute("DELETE FROM teacher_availability WHERE term_id=? AND teacher_id=? AND weekday=? AND period=?",
+                                      (term_id, teacher_id, day, period))
+                else:
+                    self.conn.execute("""INSERT INTO teacher_availability VALUES (?,?,?,?,?)
+                        ON CONFLICT(term_id,teacher_id,weekday,period) DO UPDATE SET status=excluded.status""",
+                        (term_id, teacher_id, day, period, status))
+
     def teacher_loads(self, term_id):
         return self.conn.execute("""SELECT l.teacher_id, l.subject_id, SUM(l.length) FROM lessons l
             JOIN cohorts c ON c.id=l.cohort_id WHERE c.term_id=? GROUP BY l.teacher_id,l.subject_id""", (term_id,)).fetchall()
@@ -73,6 +105,12 @@ class Schedule:
                 raise ValueError("강의실을 확인하세요.")
             if start + length - 1 > 11 or (length == 2 and start in (4, 8)):
                 raise ValueError("연강은 11교시를 넘거나 점심·저녁 경계를 가로지를 수 없습니다.")
+            unavailable = self.conn.execute("""SELECT period FROM teacher_availability
+                WHERE term_id=? AND teacher_id=? AND weekday=? AND status='UNAVAILABLE'
+                AND period>=? AND period<? ORDER BY period LIMIT 1""",
+                (term_id, teacher_id, weekday, start, start + length)).fetchone()
+            if unavailable:
+                raise ValueError(f"강사가 {unavailable[0]}교시에 불가능으로 설정되어 있습니다.")
             if lesson_id is not None:
                 old = self.conn.execute("SELECT cohort_id,subject_id,locked FROM lessons WHERE id=?", (lesson_id,)).fetchone()
                 if not old or old[0] != cohort_id or old[1] != subject_id:

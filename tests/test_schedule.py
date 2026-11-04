@@ -3,6 +3,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from academy_timetable.db import Database
 from academy_timetable.schedule import Schedule
@@ -142,6 +143,107 @@ class ScheduleTests(unittest.TestCase):
             self.assertEqual(len(Schedule(db).lessons(cohort)), 1)
             db.conn.close()
 
+    def test_teacher_availability_and_atomic_changes(self):
+        s = self.schedule
+        self.assertEqual(s.availability(self.term, self.t1), [])
+        s.set_availability(self.term, self.t1, {(0, 2), (2, 5)}, "UNAVAILABLE")
+        with self.assertRaisesRegex(ValueError, "2교시"):
+            s.assign(self.a, self.math, self.t1, None, 0, 1)
+        self.assertEqual(s.lessons(self.a), [])
+        s.set_availability(self.term, self.t1, {(0, 2)}, "UNSET")
+        s.assign(self.a, self.math, self.t1, None, 0, 1)
+        with self.assertRaisesRegex(ValueError, "이미 배정"):
+            s.set_availability(self.term, self.t1, {(0, 2), (1, 3)}, "UNAVAILABLE")
+        self.assertEqual(s.availability(self.term, self.t1), [(2, 5, "UNAVAILABLE")])
+        s.set_availability(self.term, self.t1, {(0, 1), (0, 2)}, "AVAILABLE")
+        self.assertEqual(len(s.availability(self.term, self.t1)), 3)
+        self.db.add("terms", "다른 학기")
+        other = next(row[0] for row in self.db.list("terms") if row[1] == "다른 학기")
+        self.assertEqual(s.availability(other, self.t1), [])
+        self.assertEqual(s.availability(self.term, self.t2), [])
+
+    def test_existing_v2_lessons_survive_upgrade(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "old.sqlite3"
+            old = Database(path)
+            old.add("terms", "기존 학기")
+            term_id = old.list("terms")[0][0]
+            old.add("cohorts", "기존 반", term_id)
+            old.add("subjects", "수학")
+            old.add("teachers", "강사")
+            cohort = old.list("cohorts", term_id)[0][0]
+            subject = old.list("subjects")[0][0]
+            teacher = old.list("teachers")[0][0]
+            Schedule(old).save_quota(cohort, subject, 2, 2)
+            Schedule(old).assign(cohort, subject, teacher, None, 0, 1)
+            old.conn.execute("DROP TABLE teacher_availability")
+            old.conn.execute("PRAGMA user_version=2")
+            old.conn.commit()
+            old.conn.close()
+            upgraded = Database(path)
+            self.assertEqual(upgraded.conn.execute("PRAGMA user_version").fetchone()[0], 3)
+            self.assertEqual(len(Schedule(upgraded).lessons(cohort)), 1)
+            self.assertEqual(Schedule(upgraded).quotas(cohort)[0][4], 2)
+            self.assertEqual(upgraded.conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+            self.assertEqual(upgraded.conn.execute("PRAGMA foreign_key_check").fetchall(), [])
+            upgraded.conn.close()
+
+    def test_concurrent_database_initialization_and_upgrade(self):
+        for version in (0, 2):
+            with self.subTest(version=version), tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "shared.sqlite3"
+                if version == 2:
+                    previous = Database(path)
+                    previous.add("terms", "기존 학기")
+                    previous.conn.execute("DROP TABLE teacher_availability")
+                    previous.conn.execute("PRAGMA user_version=2")
+                    previous.conn.commit()
+                    previous.conn.close()
+                else:
+                    sqlite3.connect(path).close()
+                barrier = threading.Barrier(2, timeout=5)
+                original_connect = sqlite3.connect
+
+                class RacingConnection(sqlite3.Connection):
+                    seen_version = False
+
+                    def execute(self, sql, parameters=()):
+                        cursor = super().execute(sql, parameters)
+                        if sql == "PRAGMA user_version" and not self.seen_version:
+                            self.seen_version = True
+                            class RacingCursor:
+                                def fetchone(self):
+                                    result = cursor.fetchone()
+                                    barrier.wait()
+                                    return result
+                            return RacingCursor()
+                        return cursor
+
+                def connect(*args, **kwargs):
+                    return original_connect(*args, **kwargs, factory=RacingConnection)
+
+                results = []
+                def open_database():
+                    try:
+                        database = Database(path)
+                        results.append(database.conn.execute("PRAGMA user_version").fetchone()[0])
+                        database.conn.close()
+                    except Exception as exc:
+                        results.append(str(exc))
+                with patch("academy_timetable.db.sqlite3.connect", side_effect=connect):
+                    workers = [threading.Thread(target=open_database) for _ in range(2)]
+                    for worker in workers:
+                        worker.start()
+                    for worker in workers:
+                        worker.join(10)
+                self.assertTrue(all(not worker.is_alive() for worker in workers))
+                self.assertEqual(results, [3, 3])
+                database = Database(path)
+                if version == 2:
+                    self.assertEqual(database.list("terms")[0][1], "기존 학기")
+                self.assertEqual(database.conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+                database.conn.close()
+
     def test_existing_v1_database_is_preserved_on_upgrade(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "old.sqlite3"
@@ -158,7 +260,7 @@ class ScheduleTests(unittest.TestCase):
             upgraded = Database(path)
             self.assertEqual(upgraded.list("terms"), [(1, "기존 학기")])
             self.assertEqual(upgraded.list("cohorts", 1), [(1, "기존 반")])
-            self.assertEqual(upgraded.conn.execute("PRAGMA user_version").fetchone()[0], 2)
+            self.assertEqual(upgraded.conn.execute("PRAGMA user_version").fetchone()[0], 3)
             upgraded.conn.close()
 
 

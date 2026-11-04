@@ -298,3 +298,89 @@ class TeacherLoadPage(QFrame):
         for column, value in enumerate(totals):
             self.table.setItem(len(teachers), column, QTableWidgetItem(value))
         self.summary.setText(f"전체 강사 {len(teachers)}명 · 선택 학기 배정 {sum(loads.values())}시수")
+
+
+class TeacherAvailabilityPage(QFrame):
+    def __init__(self, db):
+        super().__init__(objectName="card")
+        self.db = db
+        self.schedule = Schedule(db)
+        self.term_id = None
+        box = QVBoxLayout(self)
+        box.setContentsMargins(18, 16, 18, 18)
+        top = QHBoxLayout()
+        top.addWidget(QLabel("강사 가능 시간", objectName="cardTitle"))
+        top.addStretch()
+        top.addWidget(QLabel("강사"))
+        self.teacher = QComboBox()
+        self.teacher.setAccessibleName("가능 시간 설정 강사")
+        self.teacher.currentIndexChanged.connect(self.refresh)
+        top.addWidget(self.teacher)
+        box.addLayout(top)
+        for text in ("교시를 하나 또는 여러 개 선택한 뒤 상태를 지정하세요. 변경 즉시 저장됩니다.",
+                     "미설정은 가능 여부를 아직 확인하지 않은 상태입니다. 수동 편성은 허용하지만, 불가 교시는 차단합니다."):
+            label = QLabel(text, objectName="muted")
+            label.setWordWrap(True)
+            box.addWidget(label)
+        self.grid = QTableWidget(11, 5)
+        self.grid.setAccessibleName("강사 요일별 가능 시간")
+        self.grid.setHorizontalHeaderLabels([day + "요일" for day in DAYS])
+        self.grid.setVerticalHeaderLabels([f"{i}교시" for i in range(1, 12)])
+        self.grid.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.grid.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
+        self.grid.horizontalHeader().setSectionResizeMode(self.grid.horizontalHeader().ResizeMode.Stretch)
+        self.grid.verticalHeader().setDefaultSectionSize(33)
+        box.addWidget(self.grid, 1)
+        buttons = QHBoxLayout()
+        buttons.addStretch()
+        for title, state in (("가능", "AVAILABLE"), ("불가", "UNAVAILABLE"), ("미설정", "UNSET")):
+            button = QPushButton(title)
+            button.clicked.connect(lambda checked=False, value=state: self.apply(value))
+            buttons.addWidget(button)
+        box.addLayout(buttons)
+
+    def set_term(self, term_id):
+        self.term_id = term_id
+        selected = self.teacher.currentData()
+        self.teacher.blockSignals(True)
+        self.teacher.clear()
+        for teacher_id, name in self.db.list("teachers"):
+            self.teacher.addItem(name, teacher_id)
+        index = self.teacher.findData(selected)
+        if index >= 0:
+            self.teacher.setCurrentIndex(index)
+        self.teacher.blockSignals(False)
+        periods = self.db.periods(term_id)
+        self.grid.setVerticalHeaderLabels([
+            f"{i}교시  {start}~{end}" for i, (start, end) in enumerate(periods, 1)
+        ] if len(periods) == 11 else [f"{i}교시" for i in range(1, 12)])
+        self.refresh()
+
+    def refresh(self):
+        from PySide6.QtGui import QColor
+        selected = [(index.row(), index.column()) for index in self.grid.selectedIndexes()]
+        states = {(day, period): status for day, period, status in self.schedule.availability(self.term_id, self.teacher.currentData())}
+        labels = {"AVAILABLE": ("가능", "#e7f6ed"), "UNAVAILABLE": ("불가", "#fde9e9"), "UNSET": ("미설정", "#f4f6f9")}
+        self.grid.clearContents()
+        for period in range(1, 12):
+            for day in range(5):
+                status = states.get((day, period), "UNSET")
+                label, color = labels[status]
+                item = QTableWidgetItem(label)
+                item.setBackground(QColor(color))
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                self.grid.setItem(period - 1, day, item)
+        self.grid.setEnabled(self.term_id is not None and self.teacher.currentData() is not None)
+        for row, column in selected:
+            self.grid.item(row, column).setSelected(True)
+
+    def apply(self, status):
+        cells = {(index.column(), index.row() + 1) for index in self.grid.selectedIndexes()}
+        if not cells:
+            QMessageBox.information(self, "교시 선택", "가능 시간을 설정할 교시를 선택하세요.")
+            return
+        try:
+            self.schedule.set_availability(self.term_id, self.teacher.currentData(), cells, status)
+            self.refresh()
+        except Exception as exc:
+            QMessageBox.warning(self, "가능 시간 저장 실패", str(exc))

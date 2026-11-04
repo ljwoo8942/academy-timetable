@@ -84,6 +84,36 @@ class GuiTests(unittest.TestCase):
         self.window.term.setCurrentIndex(1)
         self.assertEqual(load_table.item(0, 1).text(), "0")
 
+    def test_availability_page_updates_and_blocks_conflict(self):
+        term = self.window.term.currentData()
+        self.db.add("cohorts", "A반", term)
+        self.db.add("subjects", "수학")
+        self.db.add("teachers", "강사")
+        self.window.refresh_all()
+        page = self.window.availability_page
+        self.window.nav.button(8).click()
+        page.grid.setCurrentCell(1, 0)
+        page.apply("UNAVAILABLE")
+        self.assertEqual(page.grid.item(1, 0).text(), "불가")
+        cohort = self.db.list("cohorts", term)[0][0]
+        subject = self.db.list("subjects")[0][0]
+        teacher = self.db.list("teachers")[0][0]
+        page.schedule.save_quota(cohort, subject, 2, 2)
+        with self.assertRaises(ValueError):
+            page.schedule.assign(cohort, subject, teacher, None, 0, 1)
+        page.apply("UNSET")
+        page.schedule.assign(cohort, subject, teacher, None, 0, 1)
+        with patch.object(QMessageBox, "warning") as warning:
+            page.apply("UNAVAILABLE")
+        warning.assert_called_once()
+        self.assertEqual(page.grid.item(1, 0).text(), "미설정")
+        self.window.term.setCurrentIndex(1)
+        self.assertEqual(page.grid.item(1, 0).text(), "미설정")
+        self.window.nav.button(2).click()
+        page.schedule.set_availability(self.window.term.currentData(), teacher, {(1, 3)}, "UNAVAILABLE")
+        self.window.nav.button(8).click()
+        self.assertEqual(page.grid.item(2, 1).text(), "불가")
+
 
 if __name__ == "__main__":
     unittest.main()
