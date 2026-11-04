@@ -36,7 +36,7 @@ class Database:
         self.conn = sqlite3.connect(path)
         self.conn.execute("PRAGMA foreign_keys = ON")
         version = self.conn.execute("PRAGMA user_version").fetchone()[0]
-        if version > 2:
+        if version > 3:
             raise RuntimeError("이 프로그램보다 새로운 데이터베이스입니다.")
         if version == 0:
             self.conn.executescript("""
@@ -72,6 +72,19 @@ class Database:
                     locked INTEGER NOT NULL DEFAULT 0 CHECK(locked IN (0, 1)),
                     FOREIGN KEY(cohort_id, subject_id) REFERENCES quotas(cohort_id, subject_id) ON DELETE RESTRICT);
                 PRAGMA user_version = 2;
+                COMMIT;
+            """)
+        if version < 3:
+            self.conn.executescript("""
+                BEGIN;
+                CREATE TABLE teacher_availability (
+                    term_id INTEGER NOT NULL REFERENCES terms(id) ON DELETE CASCADE,
+                    teacher_id INTEGER NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
+                    weekday INTEGER NOT NULL CHECK(weekday BETWEEN 0 AND 4),
+                    period INTEGER NOT NULL CHECK(period BETWEEN 1 AND 11),
+                    status TEXT NOT NULL CHECK(status IN ('AVAILABLE', 'UNAVAILABLE')),
+                    PRIMARY KEY(term_id, teacher_id, weekday, period));
+                PRAGMA user_version = 3;
                 COMMIT;
             """)
 

@@ -142,6 +142,51 @@ class ScheduleTests(unittest.TestCase):
             self.assertEqual(len(Schedule(db).lessons(cohort)), 1)
             db.conn.close()
 
+    def test_teacher_availability_and_atomic_changes(self):
+        s = self.schedule
+        self.assertEqual(s.availability(self.term, self.t1), [])
+        s.set_availability(self.term, self.t1, {(0, 2), (2, 5)}, "UNAVAILABLE")
+        with self.assertRaisesRegex(ValueError, "2교시"):
+            s.assign(self.a, self.math, self.t1, None, 0, 1)
+        self.assertEqual(s.lessons(self.a), [])
+        s.set_availability(self.term, self.t1, {(0, 2)}, "UNSET")
+        s.assign(self.a, self.math, self.t1, None, 0, 1)
+        with self.assertRaisesRegex(ValueError, "이미 배정"):
+            s.set_availability(self.term, self.t1, {(0, 2), (1, 3)}, "UNAVAILABLE")
+        self.assertEqual(s.availability(self.term, self.t1), [(2, 5, "UNAVAILABLE")])
+        s.set_availability(self.term, self.t1, {(0, 1), (0, 2)}, "AVAILABLE")
+        self.assertEqual(len(s.availability(self.term, self.t1)), 3)
+        self.db.add("terms", "다른 학기")
+        other = next(row[0] for row in self.db.list("terms") if row[1] == "다른 학기")
+        self.assertEqual(s.availability(other, self.t1), [])
+        self.assertEqual(s.availability(self.term, self.t2), [])
+
+    def test_existing_v2_lessons_survive_upgrade(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "old.sqlite3"
+            old = Database(path)
+            old.add("terms", "기존 학기")
+            term_id = old.list("terms")[0][0]
+            old.add("cohorts", "기존 반", term_id)
+            old.add("subjects", "수학")
+            old.add("teachers", "강사")
+            cohort = old.list("cohorts", term_id)[0][0]
+            subject = old.list("subjects")[0][0]
+            teacher = old.list("teachers")[0][0]
+            Schedule(old).save_quota(cohort, subject, 2, 2)
+            Schedule(old).assign(cohort, subject, teacher, None, 0, 1)
+            old.conn.execute("DROP TABLE teacher_availability")
+            old.conn.execute("PRAGMA user_version=2")
+            old.conn.commit()
+            old.conn.close()
+            upgraded = Database(path)
+            self.assertEqual(upgraded.conn.execute("PRAGMA user_version").fetchone()[0], 3)
+            self.assertEqual(len(Schedule(upgraded).lessons(cohort)), 1)
+            self.assertEqual(Schedule(upgraded).quotas(cohort)[0][4], 2)
+            self.assertEqual(upgraded.conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+            self.assertEqual(upgraded.conn.execute("PRAGMA foreign_key_check").fetchall(), [])
+            upgraded.conn.close()
+
     def test_existing_v1_database_is_preserved_on_upgrade(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "old.sqlite3"
@@ -158,7 +203,7 @@ class ScheduleTests(unittest.TestCase):
             upgraded = Database(path)
             self.assertEqual(upgraded.list("terms"), [(1, "기존 학기")])
             self.assertEqual(upgraded.list("cohorts", 1), [(1, "기존 반")])
-            self.assertEqual(upgraded.conn.execute("PRAGMA user_version").fetchone()[0], 2)
+            self.assertEqual(upgraded.conn.execute("PRAGMA user_version").fetchone()[0], 3)
             upgraded.conn.close()
 
 
