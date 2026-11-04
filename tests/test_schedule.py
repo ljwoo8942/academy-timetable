@@ -98,6 +98,7 @@ class ScheduleTests(unittest.TestCase):
 
             first_ready = threading.Event()
             release_first = threading.Event()
+            second_attempt = threading.Event()
             second_done = threading.Event()
             results = []
 
@@ -110,6 +111,8 @@ class ScheduleTests(unittest.TestCase):
                             release_first.wait(5)
                     connection.conn.set_trace_callback(before_insert)
                 try:
+                    if not first:
+                        second_attempt.set()
                     Schedule(connection).assign(cohort, subject, teacher, None, 0, 1)
                     results.append("saved")
                 except ValueError:
@@ -125,7 +128,8 @@ class ScheduleTests(unittest.TestCase):
             try:
                 self.assertTrue(first_ready.wait(5))
                 second.start()
-                second_done.wait(1)
+                self.assertTrue(second_attempt.wait(5))
+                self.assertFalse(second_done.wait(1), "두 번째 작성은 첫 트랜잭션이 끝날 때까지 기다려야 합니다.")
             finally:
                 release_first.set()
                 first.join(5)
