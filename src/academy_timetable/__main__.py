@@ -5,17 +5,20 @@ from pathlib import Path
 from PySide6.QtCore import QStandardPaths, Qt
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QFrame, QHBoxLayout,
                                QFileDialog, QInputDialog, QLabel, QListWidget, QListWidgetItem, QMainWindow,
-                               QMessageBox, QPushButton, QStackedWidget, QTableWidget,
+                               QMessageBox, QPushButton, QScrollArea, QStackedWidget, QTableWidget,
                                QTableWidgetItem, QVBoxLayout, QWidget)
+from .backup_ui import BackupPage
 from .db import Database
 from .excel_export import export_timetable
 from .import_ui import ImportDialog
+from .review_ui import ReviewPage
 from .schedule_ui import SchedulePage, TeacherAvailabilityPage, TeacherLoadPage
 
 
 STYLE = """
 QMainWindow, QWidget#content { background: #f3f6fa; color: #19283d; }
-QFrame#sidebar { background: #29384e; }
+QFrame#sidebar, QWidget#sideContent, QScrollArea#sideScroll { background: #29384e; }
+QScrollArea#sideScroll { border: none; }
 QLabel#brand { color: white; font-size: 18px; font-weight: bold; }
 QLabel#sideSection { color: #a7b6ca; font-size: 12px; font-weight: bold; padding: 12px 12px 3px; }
 QPushButton#sideButton { background: transparent; border: none; border-radius: 7px; color: #e5edf7;
@@ -64,7 +67,13 @@ class MainWindow(QMainWindow):
 
         sidebar = QFrame(objectName="sidebar")
         sidebar.setFixedWidth(206)
-        side = QVBoxLayout(sidebar)
+        sidebar_layout = QVBoxLayout(sidebar)
+        sidebar_layout.setContentsMargins(0, 0, 0, 0)
+        self.side_scroll = QScrollArea(objectName="sideScroll")
+        self.side_scroll.setWidgetResizable(True)
+        self.side_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        side_content = QWidget(objectName="sideContent")
+        side = QVBoxLayout(side_content)
         side.setContentsMargins(10, 20, 10, 16)
         brand = QLabel("▦  학원 시간표", objectName="brand")
         side.addWidget(brand)
@@ -82,12 +91,15 @@ class MainWindow(QMainWindow):
             ("schedule", "시간표 편집", "과목 시수를 설정하고 반별 수업을 수동으로 배정합니다."),
             ("teacher_load", "강사 시수 관리", "강사별 과목 배정 시수를 확인합니다."),
             ("availability", "강사 가능 시간", "학기별 강사 가능 시간을 설정합니다."),
+            ("review", "초안 검토", "저장된 시간표의 시수와 기본 충돌을 확인합니다."),
+            ("backup", "백업·복원", "저장된 데이터를 백업하거나 복원합니다."),
         ]
         self.lists = {}
         for index, (table, title, description) in enumerate(self.page_info):
             if index in (0, 5, 6):
                 side.addWidget(QLabel({0: "기초정보 관리", 5: "운영 설정", 6: "시간표 편성"}[index], objectName="sideSection"))
             button = QPushButton(title, objectName="sideButton")
+            button.setMinimumHeight(38)
             button.setCheckable(True)
             button.clicked.connect(lambda checked=False, i=index: self.show_page(i))
             self.nav.addButton(button, index)
@@ -103,10 +115,17 @@ class MainWindow(QMainWindow):
             elif table == "availability":
                 self.availability_page = TeacherAvailabilityPage(db)
                 self.pages.addWidget(self.availability_page)
+            elif table == "review":
+                self.review_page = ReviewPage(db)
+                self.pages.addWidget(self.review_page)
+            elif table == "backup":
+                self.pages.addWidget(BackupPage(db, self))
             else:
                 self.pages.addWidget(self.make_list_page(table, title))
         side.addStretch()
         side.addWidget(QLabel("로컬 데이터 · 개발 초기 버전", objectName="sideSection"))
+        self.side_scroll.setWidget(side_content)
+        sidebar_layout.addWidget(self.side_scroll)
         layout.addWidget(sidebar)
 
         content = QWidget(objectName="content")
@@ -240,8 +259,11 @@ class MainWindow(QMainWindow):
             self.teacher_load_page.refresh(self.term.currentData())
         elif self.page_info[index][0] == "availability":
             self.availability_page.set_term(self.term.currentData())
+        elif self.page_info[index][0] == "review":
+            self.review_page.set_term(self.term.currentData())
         self.pages.setCurrentIndex(index)
         self.nav.button(index).setChecked(True)
+        self.side_scroll.ensureWidgetVisible(self.nav.button(index))
         self.heading.setText(self.page_info[index][1])
         self.description.setText(self.page_info[index][2])
 
@@ -311,6 +333,7 @@ class MainWindow(QMainWindow):
         self.schedule_page.set_term(self.term.currentData())
         self.teacher_load_page.refresh(self.term.currentData())
         self.availability_page.set_term(self.term.currentData())
+        self.review_page.set_term(self.term.currentData())
 
     def edit(self, table, action):
         if not self.discard_period_changes():

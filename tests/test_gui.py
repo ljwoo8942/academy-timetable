@@ -114,6 +114,17 @@ class GuiTests(unittest.TestCase):
         self.window.nav.button(8).click()
         self.assertEqual(page.grid.item(2, 1).text(), "불가")
 
+    def test_review_page_updates_for_selected_term(self):
+        first = self.window.term.currentData()
+        self.db.add("cohorts", "A반", first)
+        self.window.refresh_all()
+        self.window.nav.button(9).click()
+        page = self.window.review_page
+        self.assertIn("확인 필요", page.summary.text())
+        self.assertTrue(any(page.table.item(row, 1).text() == "시수 미설정" for row in range(page.table.rowCount())))
+        self.window.term.setCurrentIndex(1)
+        self.assertFalse(any("A반" in page.table.item(row, 2).text() for row in range(page.table.rowCount())))
+
 
 if __name__ == "__main__":
     unittest.main()
