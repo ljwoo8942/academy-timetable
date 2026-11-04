@@ -38,55 +38,48 @@ class Database:
         version = self.conn.execute("PRAGMA user_version").fetchone()[0]
         if version > 3:
             raise RuntimeError("이 프로그램보다 새로운 데이터베이스입니다.")
-        if version == 0:
-            self.conn.executescript("""
-                CREATE TABLE terms (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE);
-                CREATE TABLE periods (term_id INTEGER NOT NULL REFERENCES terms(id) ON DELETE CASCADE,
-                    number INTEGER NOT NULL, start TEXT NOT NULL, end TEXT NOT NULL,
-                    PRIMARY KEY(term_id, number));
-                CREATE TABLE cohorts (id INTEGER PRIMARY KEY, term_id INTEGER NOT NULL REFERENCES terms(id) ON DELETE CASCADE,
-                    name TEXT NOT NULL, UNIQUE(term_id, name));
-                CREATE TABLE teachers (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE);
-                CREATE TABLE subjects (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, active INTEGER NOT NULL DEFAULT 1);
-                CREATE TABLE rooms (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE);
-                PRAGMA user_version = 1;
-            """)
-        if version < 2:
-            self.conn.executescript("""
-                BEGIN;
-                CREATE TABLE quotas (
-                    cohort_id INTEGER NOT NULL REFERENCES cohorts(id) ON DELETE RESTRICT,
-                    subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE RESTRICT,
-                    weekly_periods INTEGER NOT NULL CHECK(weekly_periods > 0 AND weekly_periods <= 55),
-                    session_length INTEGER NOT NULL CHECK(session_length IN (1, 2)),
-                    PRIMARY KEY(cohort_id, subject_id));
-                CREATE TABLE lessons (
-                    id INTEGER PRIMARY KEY,
-                    cohort_id INTEGER NOT NULL REFERENCES cohorts(id) ON DELETE RESTRICT,
-                    subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE RESTRICT,
-                    teacher_id INTEGER NOT NULL REFERENCES teachers(id) ON DELETE RESTRICT,
-                    room_id INTEGER REFERENCES rooms(id) ON DELETE RESTRICT,
-                    weekday INTEGER NOT NULL CHECK(weekday BETWEEN 0 AND 4),
-                    start_period INTEGER NOT NULL CHECK(start_period BETWEEN 1 AND 11),
-                    length INTEGER NOT NULL CHECK(length IN (1, 2)),
-                    locked INTEGER NOT NULL DEFAULT 0 CHECK(locked IN (0, 1)),
-                    FOREIGN KEY(cohort_id, subject_id) REFERENCES quotas(cohort_id, subject_id) ON DELETE RESTRICT);
-                PRAGMA user_version = 2;
-                COMMIT;
-            """)
         if version < 3:
-            self.conn.executescript("""
-                BEGIN;
-                CREATE TABLE teacher_availability (
-                    term_id INTEGER NOT NULL REFERENCES terms(id) ON DELETE CASCADE,
-                    teacher_id INTEGER NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
-                    weekday INTEGER NOT NULL CHECK(weekday BETWEEN 0 AND 4),
-                    period INTEGER NOT NULL CHECK(period BETWEEN 1 AND 11),
-                    status TEXT NOT NULL CHECK(status IN ('AVAILABLE', 'UNAVAILABLE')),
-                    PRIMARY KEY(term_id, teacher_id, weekday, period));
-                PRAGMA user_version = 3;
-                COMMIT;
-            """)
+            self.conn.execute("BEGIN IMMEDIATE")
+            with self.conn:
+                version = self.conn.execute("PRAGMA user_version").fetchone()[0]
+                if version > 3:
+                    raise RuntimeError("이 프로그램보다 새로운 데이터베이스입니다.")
+                if version == 0:
+                    self.conn.execute("CREATE TABLE terms (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE)")
+                    self.conn.execute("""CREATE TABLE periods (term_id INTEGER NOT NULL REFERENCES terms(id) ON DELETE CASCADE,
+                        number INTEGER NOT NULL, start TEXT NOT NULL, end TEXT NOT NULL, PRIMARY KEY(term_id, number))""")
+                    self.conn.execute("""CREATE TABLE cohorts (id INTEGER PRIMARY KEY, term_id INTEGER NOT NULL
+                        REFERENCES terms(id) ON DELETE CASCADE, name TEXT NOT NULL, UNIQUE(term_id, name))""")
+                    self.conn.execute("CREATE TABLE teachers (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE)")
+                    self.conn.execute("CREATE TABLE subjects (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, active INTEGER NOT NULL DEFAULT 1)")
+                    self.conn.execute("CREATE TABLE rooms (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE)")
+                if version < 2:
+                    self.conn.execute("""CREATE TABLE quotas (
+                        cohort_id INTEGER NOT NULL REFERENCES cohorts(id) ON DELETE RESTRICT,
+                        subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE RESTRICT,
+                        weekly_periods INTEGER NOT NULL CHECK(weekly_periods > 0 AND weekly_periods <= 55),
+                        session_length INTEGER NOT NULL CHECK(session_length IN (1, 2)),
+                        PRIMARY KEY(cohort_id, subject_id))""")
+                    self.conn.execute("""CREATE TABLE lessons (
+                        id INTEGER PRIMARY KEY,
+                        cohort_id INTEGER NOT NULL REFERENCES cohorts(id) ON DELETE RESTRICT,
+                        subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE RESTRICT,
+                        teacher_id INTEGER NOT NULL REFERENCES teachers(id) ON DELETE RESTRICT,
+                        room_id INTEGER REFERENCES rooms(id) ON DELETE RESTRICT,
+                        weekday INTEGER NOT NULL CHECK(weekday BETWEEN 0 AND 4),
+                        start_period INTEGER NOT NULL CHECK(start_period BETWEEN 1 AND 11),
+                        length INTEGER NOT NULL CHECK(length IN (1, 2)),
+                        locked INTEGER NOT NULL DEFAULT 0 CHECK(locked IN (0, 1)),
+                        FOREIGN KEY(cohort_id, subject_id) REFERENCES quotas(cohort_id, subject_id) ON DELETE RESTRICT)""")
+                if version < 3:
+                    self.conn.execute("""CREATE TABLE teacher_availability (
+                        term_id INTEGER NOT NULL REFERENCES terms(id) ON DELETE CASCADE,
+                        teacher_id INTEGER NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
+                        weekday INTEGER NOT NULL CHECK(weekday BETWEEN 0 AND 4),
+                        period INTEGER NOT NULL CHECK(period BETWEEN 1 AND 11),
+                        status TEXT NOT NULL CHECK(status IN ('AVAILABLE', 'UNAVAILABLE')),
+                        PRIMARY KEY(term_id, teacher_id, weekday, period))""")
+                self.conn.execute("PRAGMA user_version = 3")
 
     def list(self, table, term_id=None):
         if table not in TABLES:

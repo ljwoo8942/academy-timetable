@@ -199,6 +199,8 @@ class MainWindow(QMainWindow):
     def show_page(self, index):
         if self.page_info[index][0] == "teacher_load":
             self.teacher_load_page.refresh(self.term.currentData())
+        elif self.page_info[index][0] == "availability":
+            self.availability_page.set_term(self.term.currentData())
         self.pages.setCurrentIndex(index)
         self.nav.button(index).setChecked(True)
         self.heading.setText(self.page_info[index][1])

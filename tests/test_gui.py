@@ -109,6 +109,10 @@ class GuiTests(unittest.TestCase):
         self.assertEqual(page.grid.item(1, 0).text(), "미설정")
         self.window.term.setCurrentIndex(1)
         self.assertEqual(page.grid.item(1, 0).text(), "미설정")
+        self.window.nav.button(2).click()
+        page.schedule.set_availability(self.window.term.currentData(), teacher, {(1, 3)}, "UNAVAILABLE")
+        self.window.nav.button(8).click()
+        self.assertEqual(page.grid.item(2, 1).text(), "불가")
 
 
 if __name__ == "__main__":
