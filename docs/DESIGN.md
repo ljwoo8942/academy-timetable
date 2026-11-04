@@ -1,11 +1,12 @@
 # 재수종합반 시간표 관리 시스템 — 상세 설계서
 
-- 문서 버전: 1.0
+- 문서 버전: 2.0
 - 작성일: 2026-11-04
-- 상태: 초기 설계안 (구현 전)
+- 상태: Python 데스크톱 설계안 (구현 전)
 - 프로젝트: academy-timetable
 - 기반 운영 모델: 종로학원 재수종합반과 유사한 **반·요일·교시 중심 운영**
 - 편성 방식: **수동 배치 + 자동 최적화 혼합형**
+- 운영 형태: **Windows PC 우선 / Python 오프라인 데스크톱 프로그램**
 
 > 주의: 이 문서는 공개적으로 알려진 재수종합반의 교시제 운영 방식을 참고한 독립 소프트웨어 설계안입니다. 종로학원의 공식 시스템이나 내부 업무 규칙을 재현했다고 주장하지 않습니다. 실제 교시 시간, 시수, 캠퍼스 규칙은 운영자가 직접 설정합니다. 예시 데이터는 모두 가상입니다.
 
@@ -13,7 +14,7 @@
 
 ### 1.1 목표
 
-학원 관리자가 학기별로 반, 교시, 과목별 시수, 강사, 강의실, 선택수업을 정의하고 다음 작업을 한 화면에서 수행한다.
+학원 관리자가 설치형 Python 프로그램에서 학기별로 반, 교시, 과목별 시수, 강사, 강의실, 선택수업을 정의하고 다음 작업을 수행한다. 기본 기능은 인터넷 연결 없이 작동한다.
 
 1. 반별 주간 시간표를 수동으로 작성한다.
 2. 수업 블록을 잠가 자동 편성에서 보호한다.
@@ -23,16 +24,19 @@
 6. 강사별·반별·강의실별 시간표를 조회하고 출력한다.
 7. 정규 반복 시간표와 날짜별 휴강·보강·모의고사를 별도로 관리한다.
 
-### 1.2 주요 사용자
+### 1.2 주요 사용자와 운영 형태
 
-| 역할 | 권한 |
+**MVP는 관리자 PC 한 대에서 실행하는 단일 사용자 데스크톱 프로그램**이다. 웹 로그인, 서버, 온라인 계정 없이 로컬 DB 파일을 사용한다.
+
+| 사용자 | 지원 범위 |
 | --- | --- |
-| 총괄 관리자 | 캠퍼스/학기 설정, 사용자 관리, 모든 초안 편집, 편성 실행, 확정·복원 |
-| 시간표 담당자 | 기준정보 등록, 시간표 초안 편집, 자동 편성 실행, 검증, 출력 |
-| 강사 | 본인 시간표 열람, 가능 시간 제출, 변경 요청 |
-| 학생/학부모 | 본인 시간표 열람 (후속 버전) |
+| 관리자 | 모든 정보 수정, 편성, 검토, 확정, 백업, 출력 |
+| 강사 | 관리자가 내보낸 강사별 시간표를 열람 |
+| 학생/학부모 | 관리자가 내보낸 시간표를 열람(개별 조회는 후속) |
 
-모든 쓰기 API는 서버에서 학원 소속 및 역할 권한을 검사한다.
+- 첫 버전은 다중 PC 동시 편집/온라인 계정/웹 권한을 제공하지 않는다.
+- 운영체제 사용자 계정과 파일 권한으로 로컬 파일 접근을 제한한다. 이는 앱 수준의 다중 사용자 인증을 대체하지 않는다.
+- 향후 공동 편집이 필요하면 중앙 서버 구조로 별도 확장한다. SQLite 파일을 네트워크 공유 폴더에서 다중 PC 동시 편집용으로 쓰지 않는다.
 
 ### 1.3 우선 구현 범위(MVP)
 
@@ -44,13 +48,14 @@
 - 배치안 검토 및 게시(확정)
 - 반별/강사별 보기와 인쇄
 
-후속 확장: 학생별 선택수업, 특강·모의고사, 날짜별 예외 일정, 학부모 조회, 세밀한 알림·통계.
+후속 확장: 학생별 선택수업, 특강·모의고사, 날짜별 예외 일정, 세밀한 알림·통계, 선택적 다중 PC 연동.
 
 ### 1.4 비목표
 
 - 출결, 학원비 수납, 성적 분석을 첫 버전에 포함하지 않는다.
 - 특정 학원의 내부 시수·강사 배정 규칙을 추정하여 기본값으로 강제하지 않는다.
 - 자동 편성 결과를 검증 없이 즉시 운영 시간표에 반영하지 않는다.
+- 브라우저 UI, REST API, 웹 서버, 온라인 계정은 MVP에 포함하지 않는다.
 
 ## 2. 용어와 기본 원칙
 
@@ -150,50 +155,56 @@ flowchart TD
 - 실행 결과는 별도 배치안으로 저장하며 사용자 승인 전에는 원본 버전을 변경하지 않는다.
 - 관리자가 수동으로 만든 항목은 기본 잠금을 권장하되 해제할 수 있게 한다.
 
-## 5. 화면 설계
+## 5. Python 데스크톱 화면 설계
 
-| 화면/경로(안) | 핵심 기능 |
+메인 창은 **PySide6 QMainWindow**를 사용한다. 좌측 메뉴, 상단 도구 모음, 중앙 시간표 그리드, 하단 알림 영역으로 구성하며 **URL 없이 Python 위젯 사이를 전환**한다.
+
+| 화면/위젯 이름 | 기능 |
 | --- | --- |
-| /dashboard | 전체 반/강사 수, 시수 미충족, 충돌, 최신 편성 작업 |
-| /settings/terms | 학기·운영 기간·공휴일 기본 설정 |
-| /settings/periods | 교시표 편집, 수업 가능 교시 및 공통 시간 설정 |
-| /cohorts | 반 생성·계열·정원·담임·학생 명단 |
-| /teachers | 강사/담당 과목/가능 교시/불가 교시 |
-| /rooms | 강의실/정원/시설/사용 불가 시간 |
-| /subjects/quotas | 반별 과목 시수, 연속 교시·요일 분산 조건 |
-| /timetables/:id/editor | 주간 시간표 수동 편집·고정·복사·충돌 표시 |
-| /timetables/:id/generate | 자동 편성 범위·우선순위·작업 상태 |
-| /timetables/:id/review | 기존 안/자동 생성안 비교·미배치 진단·적용 |
-| /timetables/:id/publish | 검증·게시/이력/복원 |
-| /schedules | 반별·강사별·강의실별 시간표 조회/출력 |
-| /exceptions | 날짜별 휴강/보강/모의고사 (후속) |
+| DashboardPage | 전체 반/강사 수, 미배치 시수, 충돌 |
+| TermSettingsPage | 학기·운영 기간·요일 |
+| PeriodTemplatePage | 0~N교시, 시간, 공통 일정 |
+| CohortPage | 반·계열·정원·담임·학생 |
+| TeacherPage | 강사·담당 과목·근무 가능 교시 |
+| RoomPage | 강의실·시설·정원 |
+| QuotaPage | 반별 과목 시수/연속 교시 |
+| TimetableEditorPage | 반별·강사별·강의실별 주간표, 수동 배정, 잠금 |
+| GenerateDialog | 자동 편성 범위, 가중치, 진행 상태/취소 |
+| ProposalReviewDialog | 기존안/새 제안 비교, 미배치 사유, 적용/폐기 |
+| VersionHistoryPage | 초안 생성, 검증, 확정, 버전 복사 |
+| ExportDialog | PDF/엑셀 출력·인쇄 미리보기 |
+| BackupRestoreDialog | 로컬 SQLite 백업/복원 |
+| ExceptionPage | 날짜별 휴강/보강/모의고사(후속) |
 
-### 5.1 시간표 편집기 레이아웃
+### 5.1 주간 시간표 편집기
 
 ~~~text
-┌────────────────────────────────────────────────────────────┐
-│ 학기 · 시간표 버전    [반별][강사별][강의실별]   [검증][자동편성] │
-├──────────────┬─────────────────────────────────────────────┤
-│ 반 목록       │          월   화   수   목   금              │
-│ 자연계 A      │ 1교시    국어 수학 영어 수학 국어              │
-│ 자연계 B      │ 2교시    수학 영어 국어 영어 수학              │
-│ 인문계 A      │ 3교시    영어 국어 수학 국어 탐구              │
-│ ...           │ ...                                         │
-├──────────────┴─────────────────────────────────────────────┤
-│ 선택 교시: 과목 / 강사 / 강의실 / 유형 / 잠금 / 삭제          │
-│ 미배치 시수 · 충돌 상세 · 실행 취소                            │
-└────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│ 파일  편집  시간표  자동편성  도구  도움말                        │
+│ [학기 ▼] [버전 ▼] [반별][강사별][강의실별] [검증][자동편성][출력]│
+├──────────────┬───────────────────────────────────────────────┤
+│ 반/강사 목록 │         월    화    수    목    금             │
+│ 자연계 A     │ 1교시   국어  수학  영어  수학  국어            │
+│ 자연계 B     │ 2교시   수학  영어  국어  영어  수학            │
+│ 인문계 A     │ 3교시   영어  국어  수학  국어  탐구            │
+│ ...          │ ...                                           │
+├──────────────┴───────────────────────────────────────────────┤
+│ 선택 셀: 과목/강사/강의실/유형/잠금/삭제                        │
+│ 미배치 시수 · 충돌 상세 · [실행 취소][다시 실행][초안 저장]      │
+└──────────────────────────────────────────────────────────────┘
 ~~~
 
-편집 요구:
-- 교시 클릭: 과목/강사/강의실 선택 및 배치
-- 수업 드래그: 교시 이동, 필요 시 다른 강의실로 이동
-- 잠금 토글: 자동 편성 보호
-- 연속 교시 수업: 서로 연결된 블록으로 표시
-- 충돌: 해당 셀과 원인을 함께 표시. 충돌을 숨기고 저장하는 기능은 제공하지 않는다.
-- 반/강사/강의실 보기 모두 **하나의 배정 데이터**를 다르게 표시한다.
-- 화면은 PC 우선, 모바일은 조회·간단 수정 우선
-- 저장 전 미리보기와 이전 상태로 되돌리기(undo) 지원
+**구현 세부 사항**
+- 시간표: QTableView + QAbstractTableModel. 색상과 잠금 아이콘은 데이터 역할 또는 delegate로 표시한다.
+- 교시 클릭: QDialog에서 과목·강사·강의실 선택 후 저장. 수업 드래그 이동과 연속 교시 블록을 지원한다.
+- 잠금·수정·삭제·복사·실행 취소: QUndoStack 및 명령 객체 사용.
+- 반별/강사별/강의실별 화면은 동일한 DB 배정 정보를 다른 관점으로 표시한다.
+- 충돌은 해당 셀에 표시하고 하단 패널에 원인·해결 후보를 안내한다.
+- QPrintPreviewDialog 및 QPrinter로 인쇄 미리보기와 PDF 출력.
+
+### 5.2 자동 편성의 GUI 응답성
+
+자동 편성(CP-SAT)은 메인 GUI 스레드에서 수행하지 않는다. QThread + Worker 또는 별도 프로세스에서 실행하고 Qt Signal/Slot으로 진행 상태·완료·취소·오류를 전달한다. 워커에서 GUI 위젯을 직접 변경하지 않는다. 진행 중 원본 초안을 보존하고 완료 후 검토 대화상자를 연다.
 
 ## 6. 데이터 모델
 
@@ -202,7 +213,7 @@ flowchart TD
 | 테이블 | 주요 필드 및 목적 |
 | --- | --- |
 | academies | id, name, timezone |
-| users | id, academy_id, role, email, password_hash, status |
+| operators | id, display_name, created_at (MVP 로컬 이력용, 웹 로그인 없음) |
 | academic_terms | id, academy_id, name, start_date, end_date, period_template_id |
 | period_templates | id, academy_id, name, active |
 | period_slots | id, template_id, day_of_week, period_order, label, start_minute, end_minute, slot_type, allows_regular |
@@ -220,8 +231,8 @@ flowchart TD
 | elective_enrollments | elective_group_id, student_id |
 | timetable_versions | id, term_id, name, status, base_version_id, revision, created_by, published_at |
 | timetable_entries | id, version_id, cohort_id?, elective_group_id?, day_of_week, start_period_id, period_count, subject_id?, teacher_id?, room_id?, activity_type, source, is_locked |
-| generation_jobs | id, timetable_version_id, status, request_options, result_summary, created_by, started_at, finished_at |
-| generation_proposals | id, job_id, entries_snapshot, validation_summary, score |
+| generation_runs | id, timetable_version_id, status, options_json, result_json, started_at, finished_at |
+| generation_proposals | id, run_id, entries_snapshot_json, validation_json, score |
 | schedule_exceptions | id, term_id, on_date, target_entry_id?, action, replacement_data, reason |
 | audit_logs | id, actor_id, entity_type, entity_id, action, before_data, after_data, created_at |
 
@@ -235,7 +246,9 @@ flowchart TD
 - 특정 날짜 예외를 적용한 실제 일정 조회에서는 반복 시간표보다 예외의 우선순위가 높다.
 - 정규반의 학생 명단과 선택수업 등록 학생 명단을 조합해 실질 학생 충돌을 계산한다.
 - 선호 교시, 일일 최대 강의 교시 수 등은 단일 구조에 고정하지 않고 확장 가능한 제약 설정으로 둔다.
-- 개인 정보는 필요한 범위만 수집하고 접근 권한·삭제 정책을 별도로 둔다.
+- 개인정보를 최소 수집하며, OS 파일 권한·백업 관리·삭제 정책을 별도로 둔다.
+- SQLite에서 PRAGMA foreign_keys=ON을 설정하고 트랜잭션을 사용한다.
+- DB는 설치 폴더가 아닌 사용자별 앱 데이터 폴더에 저장한다. schema_version과 마이그레이션으로 스키마를 관리한다.
 
 ### 6.2 논리 관계도
 
@@ -262,7 +275,7 @@ erDiagram
   ELECTIVE_GROUPS o|--o{ TIMETABLE_ENTRIES : audience
   TEACHERS o|--o{ TIMETABLE_ENTRIES : teaches
   ROOMS o|--o{ TIMETABLE_ENTRIES : hosted_in
-  TIMETABLE_VERSIONS ||--o{ GENERATION_JOBS : requested_for
+  TIMETABLE_VERSIONS ||--o{ GENERATION_RUNS : requested_for
 ~~~
 
 ### 6.3 배정 데이터 예시
@@ -297,11 +310,11 @@ DRAFT -> VALIDATING -> READY -> PUBLISHED -> ARCHIVED
 ~~~
 
 - DRAFT: 수동 변경·자동 생성안 적용 가능
-- VALIDATING: 서버 전체 충돌 검사 진행
+- VALIDATING: 로컬 Python 서비스에서 전체 충돌 검사 진행
 - READY: 필수 조건 충족, 게시 가능
 - PUBLISHED: 조회 대상이 되는 운영본, 직접 변경 금지
 - ARCHIVED: 이전 게시본 기록 보관
-- 동시 수정은 revision(낙관적 잠금)으로 감지한다.
+- 자동 편성 중 수동 수정으로 기존 배치안이 오래된 경우 revision 검사로 적용을 거절한다.
 - 운영본 변경 시 새 DRAFT를 생성하여 게시 후 활성 운영본을 교체한다.
 
 ## 7. 충돌 검증 규칙
@@ -344,16 +357,38 @@ DRAFT -> VALIDATING -> READY -> PUBLISHED -> ARCHIVED
 
 ## 8. 자동 편성 엔진
 
-### 8.1 기술 선택
+### 8.1 기술 선택 — Python 설치형 프로그램
 
-- UI: React + TypeScript
-- API/업무 로직: Python FastAPI
-- DB: PostgreSQL (초기 로컬 개발은 SQLite 가능하나 운영은 PostgreSQL 권장)
-- 제약 최적화: Google OR-Tools CP-SAT
-- 작업 실행: 별도 백그라운드 워커/작업 큐 (고도화 단계)
-- 배포: 프론트엔드, API, DB 분리
+| 영역 | 선택 | 역할 |
+| --- | --- | --- |
+| 언어 | Python 3.12+ (호환성 확인) | 앱 전체 |
+| 데스크톱 GUI | PySide6 (Qt for Python) | 창, 시간표, 대화상자 |
+| 데이터 저장 | SQLite / Python sqlite3 | 오프라인 DB |
+| 자동 편성 | Google OR-Tools CP-SAT | 제약 조건 최적화 |
+| 계산 작업 | QThread/Worker 또는 별도 프로세스 | UI 멈춤 방지 |
+| Excel | openpyxl | XLSX 출력 |
+| PDF/인쇄 | PySide6 QPrinter, QPrintPreviewDialog | PDF·인쇄 |
+| 배포 | PyInstaller | Windows 실행 파일(후속) |
+| 테스트 | pytest, pytest-qt(선택) | 규칙·화면 테스트 |
 
-이미 Node.js 백엔드가 생기면 API를 유지하고 Python 편성 엔진만 독립 서비스로 둘 수 있다.
+**React, TypeScript, Node.js, FastAPI 서버, PostgreSQL, REST API를 MVP에 사용하지 않는다.** 하나의 로컬 Python 애플리케이션이 화면 → 서비스 → DB 및 최적화 엔진을 직접 호출한다.
+
+~~~text
+PySide6 GUI
+   │ Python 메서드 및 Qt Signal/Slot
+   ▼
+Service / Validation
+   ├── Repositories ── sqlite3 ── academy_timetable.db
+   ├── Scheduler ── OR-Tools CP-SAT
+   ├── Version / Audit / Backup
+   └── Export ── PDF / XLSX / 인쇄
+~~~
+
+**로컬 저장/백업**
+- DB 경로는 사용자별 OS 앱 데이터 경로(Windows 예: %LOCALAPPDATA%/AcademyTimetable)에 둔다.
+- 일관성 있는 백업은 sqlite3 Connection.backup()을 사용한다. 실행 중 DB 파일을 단순 복사하지 않는다.
+- 복원 전에 DB 연결을 닫고 현재 데이터를 별도 백업한다.
+- 동시 PC 접속용 네트워크 드라이브/클라우드 동기화 폴더에 DB 원본을 두지 않는다.
 
 ### 8.2 입력/출력
 
@@ -383,9 +418,9 @@ DRAFT -> VALIDATING -> READY -> PUBLISHED -> ARCHIVED
 5. Hard Constraints로 불가능한 후보 제거
 6. CP-SAT로 유효한 조합 탐색
 7. Soft Constraints 점수로 후보 최적화
-8. 결과 재검증 후 배치안(proposal) 저장
-9. 관리자가 수동 조정하거나 제안안을 초안에 적용
-10. 게시 전에 서버가 전체 조건을 재검사
+8. 결과 재검증 후 SQLite에 배치안(proposal) 저장
+9. 관리자가 PySide6 GUI에서 수동 조정하거나 제안안을 초안에 적용
+10. 최종 확정 전에 로컬 서비스가 전체 조건을 재검사
 ~~~
 
 ### 8.4 모델링 원칙
@@ -408,81 +443,87 @@ DRAFT -> VALIDATING -> READY -> PUBLISHED -> ARCHIVED
 
 실패 진단은 확정적인 전체 불가능 원인 증명과 간단한 후보 필터 분석을 구분해야 한다. 복잡한 모델에서는 여러 제약이 복합적으로 충돌할 수 있으므로 원인을 단정하지 않는다. 관리자에게 강사 가능 시간 조정, 강의실 변경, 고정 교시 해제 검토 등의 해결 후보를 보여준다.
 
-## 9. API 설계(초안)
+## 9. Python 서비스 인터페이스 설계
 
-REST + JSON, 인증 및 academy scope 필수. 아래 엔드포인트는 구현 전 합의할 초안이다.
+웹 API가 아니라 **PySide6 UI → Python Service → SQLite/OR-Tools** 직접 호출 구조를 사용한다.
 
-| 메서드 | 경로 | 설명 |
+### 9.1 계층별 책임
+
+| 계층 | 모듈 예시 | 역할 |
 | --- | --- | --- |
-| GET/POST | /api/terms | 학기 조회/생성 |
-| GET/POST | /api/period-templates | 교시표 조회/생성 |
-| GET/POST | /api/cohorts | 반 조회/생성 |
-| GET/POST | /api/teachers | 강사 조회/생성 |
-| GET/POST | /api/rooms | 강의실 조회/생성 |
-| GET/PUT | /api/cohorts/{id}/quotas | 과목별 시수 조회/수정 |
-| GET/POST | /api/timetables | 시간표 버전 조회/초안 생성 |
-| GET | /api/timetables/{id} | 반/강사/실별 배정 조회 |
-| POST | /api/timetables/{id}/entries | 수동 수업 배정 |
-| PATCH/DELETE | /api/timetables/{id}/entries/{entryId} | 수업 수정·삭제 |
-| POST | /api/timetables/{id}/validate | 전체 제약 검증 |
-| POST | /api/timetables/{id}/generate | 자동 편성 작업 생성 |
-| GET | /api/generation-jobs/{id} | 작업 상태/결과/배치안 |
-| POST | /api/timetables/{id}/proposals/{proposalId}/apply | 배치안 초안 적용 |
-| POST | /api/timetables/{id}/publish | 전체 검증 후 게시 |
-| GET | /api/schedules | 반/강사/실 기준 시간표 조회 |
-| GET | /api/timetables/{id}/export | 인쇄/PDF/엑셀 내보내기 |
+| UI | ui/pages, ui/dialogs | 화면 표시·사용자 입력 |
+| View Model | ui/models/timetable_model.py | QAbstractTableModel, 셀 색상/잠금 |
+| Service | services/timetable_service.py | 수동 배정, 이동, 확정, 버전 |
+| Validation | services/validation_service.py | 자원 중복, 주간 시수 및 조건 검증 |
+| Solver | scheduler/cp_sat_solver.py | 후보 생성과 최적 배치 |
+| Repository | repositories | SQLite CRUD 및 트랜잭션 |
+| Export | export/pdf_exporter.py, excel_exporter.py | 인쇄/PDF/XLSX |
+| Backup | services/backup_service.py | 로컬 DB 백업/복원 |
 
-자동 생성 요청 예시:
+### 9.2 Python 메서드(설계 예시)
 
-~~~json
-{
-  "mode": "UNLOCKED_AND_UNASSIGNED",
-  "preserve_locked": true,
-  "allow_partial": true,
-  "weights": {
-    "teacher_preference": 25,
-    "cohort_preference": 25,
-    "weekday_distribution": 15,
-    "teacher_idle_gap": 15,
-    "room_consistency": 10,
-    "minimize_changes": 10
-  },
-  "expected_revision": 7
-}
+~~~python
+class TimetableService:
+    def create_draft(self, term_id: str, base_version_id: str | None = None) -> str: ...
+    def list_entries(self, version_id: str, view: str, target_id: str | None = None) -> list: ...
+    def assign_entry(self, version_id: str, entry_data: dict) -> str: ...
+    def move_entry(self, entry_id: str, new_slot_id: str) -> None: ...
+    def set_locked(self, entry_id: str, locked: bool) -> None: ...
+    def validate(self, version_id: str) -> list: ...
+    def apply_proposal(self, version_id: str, proposal_id: str, expected_revision: int) -> None: ...
+    def publish(self, version_id: str) -> None: ...
+
+class SchedulerService:
+    def generate(self, version_id: str, options: dict, on_progress=None) -> str: ...
+    def cancel(self, run_id: str) -> None: ...
+
+class BackupService:
+    def backup_to(self, destination_path: str) -> None: ...
+    def restore_from(self, source_path: str) -> None: ...
 ~~~
 
-응답은 장시간 동기 요청이 아니라 작업 ID를 돌려준다.
+서비스 계층의 반환 값은 추후 dataclass/Typed 모델로 구체화한다. UI에서 직접 SQL을 실행하지 않는다.
 
-~~~json
-{
-  "job_id": "job_001",
-  "status": "PENDING",
-  "timetable_version_id": "v1_draft"
+### 9.3 자동 편성 옵션 예시
+
+~~~python
+options = {
+    "mode": "UNLOCKED_AND_UNASSIGNED",
+    "preserve_locked": True,
+    "allow_partial": True,
+    "weights": {
+        "teacher_preference": 25,
+        "cohort_preference": 25,
+        "weekday_distribution": 15,
+        "teacher_idle_gap": 15,
+        "room_consistency": 10,
+        "minimize_changes": 10,
+    },
+    "expected_revision": 7,
 }
+run_id = scheduler_service.generate("v1_draft", options)
 ~~~
 
-**API 예외 규약**
-- 400: 필드 유효성 오류
-- 401/403: 인증 또는 권한 오류
-- 404: 해당 캠퍼스 범위에서 미존재
-- 409: revision 충돌/현재 상태에서 작업 불가
-- 422: 의미적 제약 위반(예: 강사 중복/과목 시수 초과)
-- 500: 예기치 못한 서버 오류
+- 최적화는 DB에서 읽은 불변 스냅샷을 입력으로 사용한다.
+- 워커에서 계산한 제안은 별도 테이블에 저장하며 관리자 확인 전 기존 초안을 덮어쓰지 않는다.
+- 적용 직전 expected_revision과 현재 revision을 비교해 변경되었으면 확인/재편성을 요청한다.
 
-에러에는 machine-readable code, 사용자에게 보여줄 message, 충돌한 entry ID 및 권고 조치를 선택적으로 포함한다.
+### 9.4 오류 처리
+
+HTTP 오류 코드 대신 Python 예외 및 결과 타입을 사용한다. 예: ValidationError, ScheduleConflictError, StaleRevisionError, SolverInfeasibleError, StorageError, BackupError. 사용자는 한국어 오류 대화상자와 관련 반/강사/교시 및 해결 후보를 확인한다.
 
 ## 10. 시간표 검증 및 게시 정책
 
 1. 편집 중에는 오류를 즉시 표시할 수 있으나 유효하지 않은 제안 상태는 운영본에 반영되지 않는다.
-2. 저장 API는 기본 무결성 및 명백한 자원 중복을 검사한다.
+2. 로컬 Python 서비스 계층은 기본 무결성 및 자원 중복을 검사한다.
 3. 자동 편성 결과를 **원본이 아닌 제안안**으로 저장한다.
 4. 제안안 적용 때 입력 시점의 revision과 현재 revision이 같은지 확인한다.
-5. 게시 요청에는 전체 Hard Constraints, 필수 시수, 적용 기간을 재검증한다.
+5. '시간표 확정' 기능은 전체 Hard Constraints, 필수 시수, 적용 기간을 재검증한다.
 6. 통과한 경우 단일 트랜잭션으로 기존 운영본을 보관하고 새 버전을 PUBLISHED로 만든다.
 7. 게시본 직접 편집을 차단하고 변경이 필요하면 새 DRAFT를 생성한다.
 8. 모든 주요 변경과 게시 이력은 audit_logs에 남긴다.
 
-동시 수정 시 오래된 화면의 변경으로 최신 시간표가 덮이지 않도록 낙관적 잠금(버전 필드 또는 ETag)을 사용한다.
+자동 편성 도중 수동 편집이 이루어졌다면 revision 검사를 통해 이전 계산 결과가 최신 초안을 덮어쓰지 못하도록 한다. HTTP/ETag는 사용하지 않는다.
 
 ## 11. 날짜별 예외와 자습
 
@@ -501,35 +542,56 @@ REST + JSON, 인증 및 academy scope 필수. 아래 엔드포인트는 구현 �
 - 강의실별: 해당 공간의 점유 현황
 - 학생별(후속): 정규반 + 선택수업 + 날짜별 예외 통합
 - 출력: A4 가로 우선, PDF/엑셀, 출력일·적용 기간·버전 표시
-- 비공개 초안은 관리자 권한에서만 조회
-- 시간표를 공개할 때 학생 연락처 등 불필요한 개인정보는 포함하지 않음
+- 비공개 초안은 로컬 PC 내에서만 편집하며 외부 공유는 관리자가 명시적으로 내보내는 방식으로 한다.
+- 시간표 파일을 내보낼 때 학생 연락처 등 불필요한 개인정보를 포함하지 않는다.
+- PDF는 Qt 인쇄 기능, Excel은 openpyxl을 사용한다.
 
-## 13. 권장 프로젝트 구조
+## 13. 권장 Python 프로젝트 구조
 
 ~~~text
 academy-timetable/
 ├── README.md
 ├── docs/
 │   └── DESIGN.md
-├── frontend/                       # React + TypeScript (구현 예정)
-│   └── src/
-│       ├── pages/
-│       ├── components/timetable/
-│       ├── features/
-│       └── api/
-├── backend/                        # FastAPI (구현 예정)
-│   └── app/
-│       ├── api/
-│       ├── models/
-│       ├── schemas/
-│       ├── services/
-│       ├── scheduler/              # CP-SAT 편성 엔진
-│       └── tests/
-├── migrations/                     # DB 마이그레이션 (구현 예정)
-└── docker-compose.yml              # 로컬 개발 환경 (구현 예정)
+├── pyproject.toml                   # Python 의존성 및 설정 (예정)
+├── src/
+│   └── academy_timetable/
+│       ├── __init__.py
+│       ├── __main__.py              # python -m academy_timetable
+│       ├── app.py                   # QApplication 진입점
+│       ├── config.py                # 로컬 앱 데이터 경로
+│       ├── ui/
+│       │   ├── main_window.py
+│       │   ├── pages/
+│       │   ├── dialogs/
+│       │   └── models/              # Qt 테이블 모델
+│       ├── domain/                  # 데이터 클래스/enum
+│       ├── services/                # 배정·검증·확정·백업
+│       ├── scheduler/               # CP-SAT
+│       ├── repositories/            # SQLite CRUD
+│       ├── db/
+│       │   ├── connection.py
+│       │   ├── schema.sql
+│       │   └── migrations/
+│       ├── export/                  # PDF·엑셀·인쇄
+│       └── resources/
+├── tests/
+│   ├── unit/
+│   ├── integration/
+│   └── gui/
+└── packaging/
+    └── pyinstaller.spec             # 실행 파일 배포 (후속)
 ~~~
 
-위 디렉터리는 **목표 구조 예시**이며, 실제 파일과 애플리케이션 구현을 완료했다는 뜻이 아니다.
+위 파일 트리는 **개발 목표**이며 소스 파일을 실제 생성했다는 의미는 아니다.
+
+### 13.1 개발·배포
+
+- 개발 환경: Python 가상환경, python -m academy_timetable 진입점.
+- Windows 배포 우선: PyInstaller 폴더 배포 형태로 빌드, 필요 시 단일 exe 검토.
+- macOS 실행은 별도 빌드/테스트로 후속 지원 가능. Windows exe는 Windows에서 빌드한다.
+- 앱 데이터(데이터베이스·설정·로그)는 설치 폴더가 아닌 사용자 데이터 디렉터리에 둔다.
+- 첫 실행 시 DB 스키마 생성/마이그레이션. 샘플 데이터는 명시적 메뉴에서만 추가한다.
 
 ## 14. 개발 단계 및 완료 기준
 
@@ -553,16 +615,19 @@ academy-timetable/
 5. **시수 보존**: 과목별 required_periods_per_week와 실제 배정 교시 수가 일치한다.
 6. **연속 교시**: 두 교시 수업이 허용 슬롯을 모두 점유하며 중복되지 않는다.
 7. **부분 편성**: 완전 해가 없어도 기존 초안 보존, 미배치 목록과 원인 표시.
-8. **낙관적 잠금**: 오래된 revision 기반 수정/배치안 적용을 409로 거절한다.
+8. **낙관적 잠금**: 오래된 revision 기반 배치안 적용은 StaleRevisionError로 거절한다.
 9. **게시 원자성**: 게시 실패 시 기존 PUBLISHED 버전은 그대로 유지된다.
 10. **날짜별 예외**: 하루만 휴강해도 다른 주 반복 시간표는 변경되지 않는다.
-11. **권한 분리**: 강사·학생은 관리자 전용 편성/게시 API에 접근할 수 없다.
+11. **로컬 데이터 접근**: SQLite가 OS 사용자별 데이터 폴더에 생성되고 파일 접근 권한이 적용된다.
 12. **시간 충돌 경계**: 한 수업의 종료와 다른 수업의 시작이 같으면 겹치지 않는다.
+13. **GUI 응답성**: 자동 편성 중에도 창이 멈추지 않고 완료/취소/실패 상태가 표시된다.
+14. **백업·복원**: 일관성 있는 DB 백업을 만들고 복원 이전 원본을 보존한다.
+15. **오프라인**: 인터넷 없이 등록·수동/자동 편성·출력이 작동한다.
 
 ### 14.2 품질 및 보안
 
-- 서버 측 데이터 검증, 역할 기반 권한, 캠퍼스별 데이터 격리
-- 학생 개인정보 최소화, 비밀번호 해싱, 감사 로그
+- Python 서비스 계층 검증, SQLite 외래키/트랜잭션, 캠퍼스별 데이터 범위 확인
+- 학생 개인정보 최소화, OS 파일 접근 권한, 변경 감사 로그. 첫 버전에는 온라인 계정/비밀번호를 저장하지 않음
 - 정기 백업과 시간표 버전 복원 절차
 - 자동 편성 시간 제한과 작업 취소/실패 복구
 - 성능 목표는 실제 반·강사·교실 수 데이터를 확보한 뒤 확정
@@ -577,7 +642,9 @@ academy-timetable/
 - **수동 고정 + 자동 편성 + 관리자 검토**
 - **강사·반·학생·강의실 중복 검증**
 - **초안과 게시본 분리**
-- **React/TypeScript + FastAPI + PostgreSQL + OR-Tools**를 신규 프로젝트의 기본 기술 후보로 사용
+- **Python + PySide6 + SQLite + OR-Tools**를 기본 스택으로 사용
+- **Windows PC용 설치형 오프라인 프로그램** 우선
+- **웹 UI·REST API·웹 서버 없이 로컬 Python 함수 호출**
 
 ### 구현 전에 결정할 항목
 
@@ -586,7 +653,7 @@ academy-timetable/
 - 한 교시에 여러 과목을 병행하는 이동수업의 세부 운영
 - 자습실/감독 강사 배치 기준
 - 강사별 일일 최대 강의 및 연속 강의 제한
-- 외부 학생/학부모 조회 허용 범위
+- 인쇄·파일 공유 외 별도 학생/학부모 조회 도구의 도입 여부
 - 인쇄 레이아웃 및 파일 양식
 - 자동 편성 성능 목표를 검증할 샘플 데이터 규모
 
@@ -594,9 +661,10 @@ academy-timetable/
 
 - [종로학원 공식 홈페이지](https://www.jongro.co.kr/) — 시간표 운영 구조의 참고 출처. 교시 구성은 캠퍼스·모집 과정·연도에 따라 변동될 수 있음.
 - [Google OR-Tools CP-SAT](https://developers.google.com/optimization/cp/cp_solver)
-- [FastAPI](https://fastapi.tiangolo.com/)
-- [React](https://react.dev/)
-- [PostgreSQL](https://www.postgresql.org/)
+- [Qt for Python / PySide6](https://doc.qt.io/qtforpython-6/)
+- [Python sqlite3](https://docs.python.org/3/library/sqlite3.html)
+- [openpyxl](https://openpyxl.readthedocs.io/)
+- [PyInstaller](https://pyinstaller.org/)
 
 ---
 
