@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QFrame, QH
                                QMessageBox, QPushButton, QStackedWidget, QTableWidget,
                                QTableWidgetItem, QVBoxLayout, QWidget)
 from .db import Database
+from .schedule_ui import SchedulePage, TeacherLoadPage
 
 
 STYLE = """
@@ -75,20 +76,28 @@ class MainWindow(QMainWindow):
             ("subjects", "과목 관리", "과목을 등록하고 활성 상태를 관리합니다."),
             ("rooms", "강의실 관리", "수업에 사용할 강의실을 관리합니다."),
             ("periods", "교시·시간 설정", "선택한 학기의 월~금 공통 교시 시간을 설정합니다."),
+            ("schedule", "시간표 편집", "과목 시수를 설정하고 반별 수업을 수동으로 배정합니다."),
+            ("teacher_load", "강사 시수 관리", "강사별 과목 배정 시수를 확인합니다."),
         ]
         self.lists = {}
         for index, (table, title, description) in enumerate(self.page_info):
-            if index in (0, 5):
-                side.addWidget(QLabel("기초정보 관리" if index == 0 else "운영 설정", objectName="sideSection"))
+            if index in (0, 5, 6):
+                side.addWidget(QLabel({0: "기초정보 관리", 5: "운영 설정", 6: "시간표 편성"}[index], objectName="sideSection"))
             button = QPushButton(title, objectName="sideButton")
             button.setCheckable(True)
             button.clicked.connect(lambda checked=False, i=index: self.show_page(i))
             self.nav.addButton(button, index)
             side.addWidget(button)
-            if table != "periods":
-                self.pages.addWidget(self.make_list_page(table, title))
-            else:
+            if table == "periods":
                 self.pages.addWidget(self.make_period_page())
+            elif table == "schedule":
+                self.schedule_page = SchedulePage(db)
+                self.pages.addWidget(self.schedule_page)
+            elif table == "teacher_load":
+                self.teacher_load_page = TeacherLoadPage(db)
+                self.pages.addWidget(self.teacher_load_page)
+            else:
+                self.pages.addWidget(self.make_list_page(table, title))
         side.addStretch()
         side.addWidget(QLabel("로컬 데이터 · 개발 초기 버전", objectName="sideSection"))
         layout.addWidget(sidebar)
@@ -133,7 +142,7 @@ class MainWindow(QMainWindow):
             cards.addWidget(card, 1)
         body.addLayout(cards)
         body.addWidget(self.pages, 1)
-        self.statusBar().showMessage("시간표 편성과 자동 편성은 아직 구현되지 않았습니다.")
+        self.statusBar().showMessage("수동 편성: 반·강사·강의실 중복만 검사 · 교과별 규칙·강사 가능 시간·자동 편성·확정은 미지원")
         self.refresh_all()
         self.show_page(2)
 
@@ -184,6 +193,8 @@ class MainWindow(QMainWindow):
         return card
 
     def show_page(self, index):
+        if self.page_info[index][0] == "teacher_load":
+            self.teacher_load_page.refresh(self.term.currentData())
         self.pages.setCurrentIndex(index)
         self.nav.button(index).setChecked(True)
         self.heading.setText(self.page_info[index][1])
@@ -252,6 +263,8 @@ class MainWindow(QMainWindow):
         self.period_table.blockSignals(False)
         self.period_dirty = False
         self.refresh_metrics()
+        self.schedule_page.set_term(self.term.currentData())
+        self.teacher_load_page.refresh(self.term.currentData())
 
     def edit(self, table, action):
         if not self.discard_period_changes():
@@ -274,7 +287,7 @@ class MainWindow(QMainWindow):
             else:
                 message = "선택한 항목을 삭제하시겠습니까?"
                 if table == "terms":
-                    message = "학기를 삭제하면 해당 학기의 반과 교시표도 삭제됩니다. 계속하시겠습니까?"
+                    message = "학기를 삭제하면 해당 학기의 반과 교시표도 삭제됩니다. 시수나 수업이 있으면 삭제할 수 없습니다. 계속하시겠습니까?"
                 elif table == "subjects":
                     message = "선택한 과목의 활성 상태를 변경하시겠습니까?"
                 if QMessageBox.question(self, "확인", message) != QMessageBox.StandardButton.Yes:
@@ -282,7 +295,7 @@ class MainWindow(QMainWindow):
                 self.db.remove(table, row_id)
             self.refresh_all()
         except Exception as exc:
-            QMessageBox.warning(self, "저장 실패", f"저장하지 못했습니다. 이름 중복이나 입력값을 확인하세요.\n{exc}")
+            QMessageBox.warning(self, "저장 실패", f"이름 중복이나 입력값을 확인하세요. 시수나 수업에 사용 중인 항목은 먼저 연결을 해제해야 합니다.\n{exc}")
 
     def save_periods(self):
         try:
