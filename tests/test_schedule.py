@@ -1,5 +1,6 @@
 import sqlite3
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -79,6 +80,63 @@ class ScheduleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "초과"):
             s.assign(self.a, self.math, self.t1, None, 3, 1)
         self.assertEqual(s.teacher_loads(self.term), [(self.t1, self.math, 4), (self.t2, self.english, 1)])
+
+    def test_concurrent_assignments_cannot_exceed_quota(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "shared.sqlite3"
+            db = Database(path)
+            db.add("terms", "학기")
+            term_id = db.list("terms")[0][0]
+            db.add("cohorts", "A반", term_id)
+            db.add("subjects", "수학")
+            db.add("teachers", "강사")
+            cohort = db.list("cohorts", term_id)[0][0]
+            subject = db.list("subjects")[0][0]
+            teacher = db.list("teachers")[0][0]
+            Schedule(db).save_quota(cohort, subject, 2, 2)
+            db.conn.close()
+
+            first_ready = threading.Event()
+            release_first = threading.Event()
+            second_done = threading.Event()
+            results = []
+
+            def assign(first):
+                connection = Database(path)
+                if first:
+                    def before_insert(sql):
+                        if sql.startswith("INSERT INTO lessons("):
+                            first_ready.set()
+                            release_first.wait(5)
+                    connection.conn.set_trace_callback(before_insert)
+                try:
+                    Schedule(connection).assign(cohort, subject, teacher, None, 0, 1)
+                    results.append("saved")
+                except ValueError:
+                    results.append("rejected")
+                finally:
+                    connection.conn.close()
+                    if not first:
+                        second_done.set()
+
+            first = threading.Thread(target=assign, args=(True,))
+            second = threading.Thread(target=assign, args=(False,))
+            first.start()
+            try:
+                self.assertTrue(first_ready.wait(5))
+                second.start()
+                second_done.wait(1)
+            finally:
+                release_first.set()
+                first.join(5)
+                if second.ident is not None:
+                    second.join(5)
+            self.assertFalse(first.is_alive())
+            self.assertFalse(second.is_alive())
+            self.assertCountEqual(results, ["saved", "rejected"])
+            db = Database(path)
+            self.assertEqual(len(Schedule(db).lessons(cohort)), 1)
+            db.conn.close()
 
     def test_existing_v1_database_is_preserved_on_upgrade(self):
         with tempfile.TemporaryDirectory() as tmp:

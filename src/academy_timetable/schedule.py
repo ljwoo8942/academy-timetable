@@ -1,10 +1,18 @@
 """수동 시간표와 반별 주간 시수 관리."""
 
+from contextlib import contextmanager
+
 
 class Schedule:
     def __init__(self, db):
         self.db = db
         self.conn = db.conn
+
+    @contextmanager
+    def transaction(self):
+        self.conn.execute("BEGIN IMMEDIATE")
+        with self.conn:
+            yield
 
     def quotas(self, cohort_id):
         return self.conn.execute("""
@@ -20,7 +28,7 @@ class Schedule:
             raise ValueError("주간 시수와 수업 길이를 확인하세요.")
         if weekly % length:
             raise ValueError("주간 시수는 수업 길이로 나누어떨어져야 합니다.")
-        with self.conn:
+        with self.transaction():
             if not self.conn.execute("SELECT 1 FROM cohorts WHERE id=?", (cohort_id,)).fetchone():
                 raise ValueError("반을 선택하세요.")
             subject = self.conn.execute("SELECT active FROM subjects WHERE id=?", (subject_id,)).fetchone()
@@ -34,7 +42,7 @@ class Schedule:
                 (cohort_id, subject_id, weekly, length))
 
     def delete_quota(self, cohort_id, subject_id):
-        with self.conn:
+        with self.transaction():
             if self.conn.execute("SELECT 1 FROM lessons WHERE cohort_id=? AND subject_id=?", (cohort_id, subject_id)).fetchone():
                 raise ValueError("배정된 수업을 먼저 삭제하세요.")
             self.conn.execute("DELETE FROM quotas WHERE cohort_id=? AND subject_id=?", (cohort_id, subject_id))
@@ -52,7 +60,7 @@ class Schedule:
     def assign(self, cohort_id, subject_id, teacher_id, room_id, weekday, start, lesson_id=None):
         if weekday not in range(5) or start not in range(1, 12):
             raise ValueError("월~금과 1~11교시를 선택하세요.")
-        with self.conn:
+        with self.transaction():
             quota = self.conn.execute("""SELECT q.weekly_periods,q.session_length,c.term_id,s.active
                 FROM quotas q JOIN cohorts c ON c.id=q.cohort_id JOIN subjects s ON s.id=q.subject_id
                 WHERE q.cohort_id=? AND q.subject_id=?""", (cohort_id, subject_id)).fetchone()
@@ -92,11 +100,11 @@ class Schedule:
                                   (teacher_id, room_id, weekday, start, length, lesson_id))
 
     def lock(self, lesson_id, locked):
-        with self.conn:
+        with self.transaction():
             self.conn.execute("UPDATE lessons SET locked=? WHERE id=?", (int(bool(locked)), lesson_id))
 
     def delete(self, lesson_id):
-        with self.conn:
+        with self.transaction():
             row = self.conn.execute("SELECT locked FROM lessons WHERE id=?", (lesson_id,)).fetchone()
             if not row:
                 raise ValueError("수업을 찾을 수 없습니다.")
