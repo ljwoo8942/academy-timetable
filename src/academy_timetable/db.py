@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 
 DEFAULT_PERIODS = (
@@ -80,6 +81,18 @@ class Database:
                         status TEXT NOT NULL CHECK(status IN ('AVAILABLE', 'UNAVAILABLE')),
                         PRIMARY KEY(term_id, teacher_id, weekday, period))""")
                 self.conn.execute("PRAGMA user_version = 3")
+        self.restore_generation = self.conn.execute("PRAGMA application_id").fetchone()[0]
+
+    def assert_current(self):
+        if self.conn.execute("PRAGMA application_id").fetchone()[0] != self.restore_generation:
+            raise ValueError("다른 창에서 데이터를 복원했습니다. 프로그램을 다시 시작한 뒤 작업하세요.")
+
+    @contextmanager
+    def transaction(self):
+        self.conn.execute("BEGIN IMMEDIATE")
+        with self.conn:
+            self.assert_current()
+            yield
 
     def list(self, table, term_id=None):
         if table not in TABLES:
@@ -94,7 +107,7 @@ class Database:
         if table not in TABLES or not name.strip():
             raise ValueError("이름을 입력하세요.")
         name = name.strip()
-        with self.conn:
+        with self.transaction():
             if table == "terms":
                 term_id = self.conn.execute("INSERT INTO terms(name) VALUES (?)", (name,)).lastrowid
                 self.conn.executemany("INSERT INTO periods VALUES (?, ?, ?, ?)",
@@ -109,13 +122,13 @@ class Database:
     def rename(self, table, row_id, name):
         if table not in TABLES or not name.strip():
             raise ValueError("이름을 입력하세요.")
-        with self.conn:
+        with self.transaction():
             self.conn.execute(f"UPDATE {table} SET name = ? WHERE id = ?", (name.strip(), row_id))
 
     def remove(self, table, row_id):
         if table not in TABLES:
             raise ValueError("잘못된 항목입니다.")
-        with self.conn:
+        with self.transaction():
             if table == "subjects":
                 self.conn.execute("UPDATE subjects SET active = 1 - active WHERE id = ?", (row_id,))
             else:
@@ -128,7 +141,7 @@ class Database:
         if term_id is None or len(periods) != 11:
             raise ValueError("학기와 11개 교시를 확인하세요.")
         validate_periods(periods)
-        with self.conn:
+        with self.transaction():
             if self.conn.execute("SELECT count(*) FROM periods WHERE term_id = ?", (term_id,)).fetchone()[0] != 11:
                 raise ValueError("학기의 교시표를 찾을 수 없습니다.")
             self.conn.executemany("UPDATE periods SET start = ?, end = ? WHERE term_id = ? AND number = ?",

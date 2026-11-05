@@ -245,8 +245,11 @@ class SchedulePage(QFrame):
         if not lesson:
             QMessageBox.information(self, "수업 선택", "시간표에서 수업을 선택하세요.")
             return
-        self.schedule.lock(lesson[0], not lesson[7])
-        self.refresh()
+        try:
+            self.schedule.lock(lesson[0], not lesson[7])
+            self.refresh()
+        except Exception as exc:
+            QMessageBox.warning(self, "잠금 변경 실패", str(exc))
 
     def delete_lesson(self):
         lesson = self.selected_lesson()

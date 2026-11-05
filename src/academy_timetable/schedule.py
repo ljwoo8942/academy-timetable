@@ -1,18 +1,12 @@
 """수동 시간표와 반별 주간 시수 관리."""
 
-from contextlib import contextmanager
-
-
 class Schedule:
     def __init__(self, db):
         self.db = db
         self.conn = db.conn
 
-    @contextmanager
     def transaction(self):
-        self.conn.execute("BEGIN IMMEDIATE")
-        with self.conn:
-            yield
+        return self.db.transaction()
 
     def quotas(self, cohort_id):
         return self.conn.execute("""

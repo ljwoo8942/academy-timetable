@@ -255,6 +255,12 @@ class MainWindow(QMainWindow):
         return card
 
     def show_page(self, index):
+        try:
+            self.db.assert_current()
+        except ValueError as exc:
+            self.nav.button(self.pages.currentIndex()).setChecked(True)
+            QMessageBox.warning(self, "데이터 변경", str(exc))
+            return
         if self.page_info[index][0] == "teacher_load":
             self.teacher_load_page.refresh(self.term.currentData())
         elif self.page_info[index][0] == "availability":
@@ -304,6 +310,14 @@ class MainWindow(QMainWindow):
         ) == QMessageBox.StandardButton.Yes
 
     def change_term(self):
+        try:
+            self.db.assert_current()
+        except ValueError as exc:
+            self.term.blockSignals(True)
+            self.term.setCurrentIndex(self.term.findData(self.previous_term))
+            self.term.blockSignals(False)
+            QMessageBox.warning(self, "데이터 변경", str(exc))
+            return
         if not self.discard_period_changes():
             self.term.blockSignals(True)
             self.term.setCurrentIndex(self.term.findData(self.previous_term))

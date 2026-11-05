@@ -56,6 +56,7 @@ def backup_to(db, destination):
         output = sqlite3.connect(temporary)
         try:
             _copy(db.conn, output)
+            _check_backup(output)
         finally:
             output.close()
         os.replace(temporary, target)
@@ -108,6 +109,7 @@ def restore_from(db, source_path):
             source.close()
         db.conn.execute("BEGIN IMMEDIATE")
         try:
+            db.assert_current()
             with tempfile.NamedTemporaryFile(prefix="before_restore_", suffix=".sqlite3", dir=current_path.parent, delete=False) as handle:
                 safety = Path(handle.name)
             reader = sqlite3.connect(current_path.as_uri() + "?mode=ro", uri=True)
@@ -130,7 +132,11 @@ def restore_from(db, source_path):
                 db.conn.execute(f"INSERT INTO main.{table} ({names}) SELECT {names} FROM restore_source.{table}")
             if db.conn.execute("PRAGMA main.foreign_key_check").fetchone():
                 raise ValueError("복원 데이터의 연결 정보가 올바르지 않습니다.")
+            # 다른 창이 복원 전 식별자로 쓰지 못하도록 데이터와 함께 세대를 갱신한다.
+            next_generation = (db.restore_generation + 1) % 2147483647
+            db.conn.execute(f"PRAGMA application_id = {next_generation}")
             db.conn.commit()
+            db.restore_generation = next_generation
             applied = True
         except Exception:
             db.conn.rollback()

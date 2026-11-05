@@ -20,6 +20,7 @@ class BackupTests(unittest.TestCase):
         self.db = Database(self.path)
         self.db.add("terms", "원본 학기")
         term = self.db.list("terms")[0][0]
+        self.term = term
         self.db.add("cohorts", "원본 반", term)
         self.db.add("subjects", "수학")
         self.db.add("teachers", "강사")
@@ -90,6 +91,7 @@ class BackupTests(unittest.TestCase):
         writer_started = threading.Event()
         writer_done = threading.Event()
         results = []
+        writer_results = []
 
         def restore():
             connection = Database(self.path)
@@ -110,6 +112,9 @@ class BackupTests(unittest.TestCase):
             try:
                 writer_started.set()
                 connection.add("teachers", "동시 저장 강사")
+                writer_results.append("saved")
+            except Exception as exc:
+                writer_results.append(str(exc))
             finally:
                 connection.conn.close()
                 writer_done.set()
@@ -131,7 +136,9 @@ class BackupTests(unittest.TestCase):
         self.assertFalse(write_thread.is_alive())
         self.assertEqual(len(results), 1)
         self.assertIsInstance(results[0], Path)
-        self.assertEqual([row[1] for row in self.db.list("teachers")], ["강사", "동시 저장 강사"])
+        self.assertEqual(len(writer_results), 1)
+        self.assertIn("다른 창에서 데이터를 복원", writer_results[0])
+        self.assertEqual([row[1] for row in self.db.list("teachers")], ["강사"])
         safety = Database(results[0])
         self.assertEqual([row[1] for row in safety.list("teachers")], ["강사", "복원 전 강사"])
         safety.conn.close()
@@ -163,6 +170,48 @@ class BackupTests(unittest.TestCase):
         self.assertIn("복원 전 데이터 백업", info.call_args.args[2])
         window.close()
 
+    def test_backup_validates_before_replacing_existing_file(self):
+        self.backup.write_bytes(b"original backup")
+        with self.db.conn:
+            self.db.conn.execute("CREATE TABLE extension_data (value TEXT)")
+        with self.assertRaisesRegex(ValueError, "테이블 구성"):
+            backup_to(self.db, self.backup)
+        self.assertEqual(self.backup.read_bytes(), b"original backup")
+        self.assertFalse(list(Path(self.tmp.name).glob(".academy-backup-*")))
+
+    def test_stale_window_cannot_modify_restored_data(self):
+        from academy_timetable.excel_export import snapshot
+        from academy_timetable.excel_import import apply_import
+        from academy_timetable.review import review_draft
+        backup_to(self.db, self.backup)
+        self.db.rename("subjects", self.subject, "다른 과목")
+        stale = Database(self.path)
+        old_schedule = Schedule(stale)
+        restore_from(self.db, self.backup)
+        operations = [
+            lambda: stale.add("teachers", "새 강사"),
+            lambda: stale.rename("subjects", self.subject, "잘못된 이름"),
+            lambda: stale.remove("teachers", self.teacher),
+            lambda: stale.save_periods(self.term, stale.periods(self.term)),
+            lambda: old_schedule.assign(self.cohort, self.subject, self.teacher, None, 1, 1),
+            lambda: old_schedule.set_availability(self.term, self.teacher, {(1, 1)}, "AVAILABLE"),
+            lambda: old_schedule.lock(old_schedule.lessons(self.cohort)[0][0], True),
+            lambda: apply_import(stale, self.term, [(2, (), {"teachers": "가져오기"}, [])]),
+            lambda: restore_from(stale, self.backup),
+            lambda: snapshot(stale, self.term),
+            lambda: review_draft(stale, self.term),
+        ]
+        for operation in operations:
+            with self.assertRaisesRegex(ValueError, "다른 창에서 데이터를 복원"):
+                operation()
+        self.assertEqual(self.db.list("subjects")[0][1], "수학")
+        self.assertEqual(self.schedule.lessons(self.cohort)[0][7], 0)
+        stale.conn.close()
+        fresh = Database(self.path)
+        fresh.add("teachers", "재시작 후 강사")
+        self.assertEqual(len(fresh.list("teachers")), 2)
+        fresh.conn.close()
+
     def test_extra_table_and_locked_backup_are_rejected(self):
         backup_to(self.db, self.backup)
         with sqlite3.connect(self.backup) as connection:
@@ -180,6 +229,32 @@ class BackupTests(unittest.TestCase):
             locked.rollback()
             locked.close()
         self.assertEqual(len(self.schedule.lessons(self.cohort)), 1)
+
+    def test_wal_restore_rejects_stale_connection(self):
+        self.assertEqual(self.db.conn.execute("PRAGMA journal_mode=WAL").fetchone()[0], "wal")
+        backup_to(self.db, self.backup)
+        stale = Database(self.path)
+        restore_from(self.db, self.backup)
+        with self.assertRaisesRegex(ValueError, "다른 창에서 데이터를 복원"):
+            stale.add("teachers", "잘못된 저장")
+        stale.conn.close()
+        self.assertEqual([row[1] for row in self.db.list("teachers")], ["강사"])
+
+    def test_stale_window_shows_restart_message_on_navigation(self):
+        from academy_timetable.__main__ import MainWindow
+        app = QApplication.instance() or QApplication([])
+        backup_to(self.db, self.backup)
+        stale = Database(self.path)
+        window = MainWindow(stale)
+        original_page = window.pages.currentIndex()
+        restore_from(self.db, self.backup)
+        with patch.object(QMessageBox, "warning") as warning:
+            window.nav.button(6).click()
+        warning.assert_called_once()
+        self.assertIn("다시 시작", warning.call_args.args[2])
+        self.assertEqual(window.pages.currentIndex(), original_page)
+        window.close()
+        stale.conn.close()
 
     def test_wrong_schema_version_is_rejected(self):
         backup_to(self.db, self.backup)
