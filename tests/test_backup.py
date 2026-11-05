@@ -198,6 +198,7 @@ class BackupTests(unittest.TestCase):
             lambda: old_schedule.lock(old_schedule.lessons(self.cohort)[0][0], True),
             lambda: apply_import(stale, self.term, [(2, (), {"teachers": "가져오기"}, [])]),
             lambda: restore_from(stale, self.backup),
+            lambda: backup_to(stale, Path(self.tmp.name) / "stale.sqlite3"),
             lambda: snapshot(stale, self.term),
             lambda: review_draft(stale, self.term),
         ]

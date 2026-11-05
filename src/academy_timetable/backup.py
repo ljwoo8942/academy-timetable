@@ -55,7 +55,12 @@ def backup_to(db, destination):
             temporary = handle.name
         output = sqlite3.connect(temporary)
         try:
-            _copy(db.conn, output)
+            db.conn.execute("BEGIN")
+            try:
+                db.assert_current()
+                _copy(db.conn, output)
+            finally:
+                db.conn.rollback()
             _check_backup(output)
         finally:
             output.close()
