@@ -15,6 +15,7 @@ DAYS = ("월", "화", "수", "목", "금")
 def snapshot(db, term_id):
     db.conn.execute("BEGIN")
     try:
+        db.assert_current()
         term = db.conn.execute("SELECT name FROM terms WHERE id=?", (term_id,)).fetchone()
         if term is None:
             raise ValueError("학기를 먼저 선택하세요.")
