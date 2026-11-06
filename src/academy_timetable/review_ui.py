@@ -33,7 +33,7 @@ class ReviewPage(QFrame):
         self.table.setColumnWidth(0, 90)
         self.table.setColumnWidth(1, 160)
         box.addWidget(self.table, 1)
-        limitation = QLabel("미검토: 학생별 선택수업, 과목별 시간대·일일 교과 혼합, 동시 편성 그룹, 강의실 정원·시설 등. 최종 확정 기능은 아직 없습니다.", objectName="muted")
+        limitation = QLabel("미검토: 학생별 선택수업, 과목별 시간대·일일 교과 혼합, 동시 편성 그룹 등. 최종 확정 기능은 아직 없습니다.", objectName="muted")
         limitation.setWordWrap(True)
         box.addWidget(limitation)
 

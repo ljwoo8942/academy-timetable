@@ -1,6 +1,6 @@
 """저장된 시간표 초안의 지원 가능한 항목만 검토한다."""
 from .db import validate_periods
-from .schedule import Schedule
+from .schedule import Schedule, missing_facilities, room_fits
 
 DAYS = ("월", "화", "수", "목", "금")
 
@@ -24,6 +24,10 @@ def review_draft(db, term_id):
         if not 3 <= len(cohorts) <= 10:
             issues.append(("확인 필요", "반 수", f"현재 {len(cohorts)}개 반입니다. 최종 운영 기준은 3~10개 반입니다."))
         schedule = Schedule(db)
+        cohort_sizes = db.capacity_values("cohorts")
+        room_capacities = db.capacity_values("rooms")
+        subject_facilities = db.facility_values("subjects")
+        room_facilities = db.facility_values("rooms")
         occupancy = {}
         teacher_times = {}
         for cohort_id, cohort in cohorts:
@@ -38,12 +42,22 @@ def review_draft(db, term_id):
                 if not active:
                     issues.append(("확인 필요", "비활성 과목", f"{cohort} · {subject}: 비활성 과목에 시수가 설정되어 있습니다."))
             for lesson in schedule.lessons(cohort_id):
-                lesson_id, day, start, length, subject, teacher, room, _, _, teacher_id, room_id = lesson
+                lesson_id, day, start, length, subject, teacher, room, _, subject_id, teacher_id, room_id = lesson
                 label = f"{cohort} · {subject} · {teacher} · {DAYS[day]}요일 {start}~{start + length - 1}교시"
                 if start + length - 1 > 11 or (length == 2 and start in (4, 8)):
                     issues.append(("오류", "연강 범위", f"{label}: 교시 범위 또는 점심·저녁 경계를 확인하세요."))
                 if room_id is None:
                     issues.append(("확인 필요", "강의실 미배정", label))
+                else:
+                    student_count = cohort_sizes[cohort_id]
+                    capacity = room_capacities.get(room_id)
+                    if student_count is None or capacity is None:
+                        issues.append(("확인 필요", "인원·정원 미설정", f"{label} · {room}: 반 인원과 강의실 정원을 확인하세요."))
+                    elif not room_fits(student_count, capacity):
+                        issues.append(("오류", "강의실 정원 부족", f"{label} · {room}: 반 인원 {student_count}명, 정원 {capacity}명"))
+                    missing = missing_facilities(subject_facilities.get(subject_id, ""), room_facilities.get(room_id, ""))
+                    if missing:
+                        issues.append(("오류", "강의실 필수 시설 부족", f"{label} · {room}: {', '.join(missing)}"))
                 if teacher_id not in teacher_times:
                     teacher_times[teacher_id] = {(weekday, period): status for weekday, period, status in schedule.availability(term_id, teacher_id)}
                 availability = teacher_times[teacher_id]

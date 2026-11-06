@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from academy_timetable.db import Database
 from academy_timetable.schedule import Schedule
+from legacy_db import make_legacy_fixture
 
 
 class ScheduleTests(unittest.TestCase):
@@ -69,6 +70,33 @@ class ScheduleTests(unittest.TestCase):
         s.delete_quota(self.a, self.math)
         self.assertEqual(s.lessons(self.a), [])
 
+    def test_room_assignment_rechecks_the_entire_lesson_and_preserves_its_fields(self):
+        s = self.schedule
+        s.assign(self.a, self.math, self.t1, None, 0, 1)
+        lesson = s.room_lessons(self.term)[0]
+        self.assertEqual([room_id for room_id, _ in s.available_rooms(self.term, lesson)], [self.r1, self.r2])
+
+        s.assign(self.b, self.english, self.t2, self.r1, 0, 2)
+        s.assign(self.b, self.english, self.t2, self.r2, 0, 3)
+        self.assertEqual([room_id for room_id, _ in s.available_rooms(self.term, lesson)], [self.r2])
+        with self.assertRaisesRegex(ValueError, "이미 배정"):
+            s.assign_room(self.term, lesson, self.r1)
+        self.assertEqual(s.room_lessons(self.term, lesson.id), [lesson])
+
+        s.assign_room(self.term, lesson, self.r2)
+        assigned = lesson._replace(room_id=self.r2, room="102")
+        self.assertEqual(s.room_lessons(self.term, lesson.id), [assigned])
+        with self.assertRaisesRegex(ValueError, "변경"):
+            s.assign_room(self.term, lesson, None)
+
+        s.lock(lesson.id, True)
+        locked = s.room_lessons(self.term, lesson.id)[0]
+        with self.assertRaisesRegex(ValueError, "잠긴 수업"):
+            s.assign_room(self.term, locked, None)
+        s.lock(lesson.id, False)
+        s.assign_room(self.term, assigned, None)
+        self.assertEqual(s.room_lessons(self.term, lesson.id), [lesson])
+
     def test_failed_move_preserves_original_and_weekly_limit(self):
         s = self.schedule
         s.assign(self.a, self.math, self.t1, None, 0, 1)
@@ -81,6 +109,43 @@ class ScheduleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "초과"):
             s.assign(self.a, self.math, self.t1, None, 3, 1)
         self.assertEqual(s.teacher_loads(self.term), [(self.t1, self.math, 4), (self.t2, self.english, 1)])
+
+    def test_room_capacity_is_checked_by_both_assignment_paths(self):
+        s = self.schedule
+        self.db.set_capacity("cohorts", self.a, 30)
+        self.db.set_capacity("rooms", self.r1, 29)
+        self.db.set_capacity("rooms", self.r2, 30)
+        with self.assertRaisesRegex(ValueError, "정원이 부족"):
+            s.assign(self.a, self.math, self.t1, self.r1, 0, 1)
+        s.assign(self.a, self.math, self.t1, None, 0, 1)
+        lesson = s.room_lessons(self.term)[0]
+        self.assertEqual(s.available_rooms(self.term, lesson), [(self.r2, "102")])
+        self.db.set_capacity("rooms", self.r2, 29)
+        with self.assertRaisesRegex(ValueError, "정원이 부족"):
+            s.assign_room(self.term, lesson, self.r2)
+        self.assertIsNone(s.room_lessons(self.term)[0].room_id)
+        self.db.set_capacity("rooms", self.r2, 30)
+        s.assign_room(self.term, lesson, self.r2)
+        self.assertEqual(s.room_lessons(self.term)[0].room_id, self.r2)
+
+    def test_required_facilities_are_checked_by_both_assignment_paths(self):
+        s = self.schedule
+        self.db.set_facilities("subjects", self.math, " 빔프로젝터 , HDMI\nhdmi\n")
+        self.assertEqual(self.db.facility_values("subjects")[self.math], "빔프로젝터\nHDMI")
+        self.db.set_facilities("rooms", self.r1, "빔프로젝터")
+        self.db.set_facilities("rooms", self.r2, "hdmi, 빔프로젝터, 화이트보드")
+        with self.assertRaisesRegex(ValueError, "필수 시설.*HDMI"):
+            s.assign(self.a, self.math, self.t1, self.r1, 0, 1)
+        s.assign(self.a, self.math, self.t1, None, 0, 1)
+        lesson = s.room_lessons(self.term)[0]
+        self.assertEqual(s.available_rooms(self.term, lesson), [(self.r2, "102")])
+        self.db.set_facilities("rooms", self.r2, "빔프로젝터")
+        with self.assertRaisesRegex(ValueError, "필수 시설.*HDMI"):
+            s.assign_room(self.term, lesson, self.r2)
+        self.assertIsNone(s.room_lessons(self.term)[0].room_id)
+        self.db.set_facilities("rooms", self.r2, "빔프로젝터\nhdmi")
+        s.assign_room(self.term, lesson, self.r2)
+        self.assertEqual(s.room_lessons(self.term)[0].room_id, self.r2)
 
     def test_concurrent_assignments_cannot_exceed_quota(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -176,12 +241,10 @@ class ScheduleTests(unittest.TestCase):
             teacher = old.list("teachers")[0][0]
             Schedule(old).save_quota(cohort, subject, 2, 2)
             Schedule(old).assign(cohort, subject, teacher, None, 0, 1)
-            old.conn.execute("DROP TABLE teacher_availability")
-            old.conn.execute("PRAGMA user_version=2")
-            old.conn.commit()
+            make_legacy_fixture(old.conn, 2)
             old.conn.close()
             upgraded = Database(path)
-            self.assertEqual(upgraded.conn.execute("PRAGMA user_version").fetchone()[0], 3)
+            self.assertEqual(upgraded.conn.execute("PRAGMA user_version").fetchone()[0], 5)
             self.assertEqual(len(Schedule(upgraded).lessons(cohort)), 1)
             self.assertEqual(Schedule(upgraded).quotas(cohort)[0][4], 2)
             self.assertEqual(upgraded.conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
@@ -195,9 +258,7 @@ class ScheduleTests(unittest.TestCase):
                 if version == 2:
                     previous = Database(path)
                     previous.add("terms", "기존 학기")
-                    previous.conn.execute("DROP TABLE teacher_availability")
-                    previous.conn.execute("PRAGMA user_version=2")
-                    previous.conn.commit()
+                    make_legacy_fixture(previous.conn, 2)
                     previous.conn.close()
                 else:
                     sqlite3.connect(path).close()
@@ -237,7 +298,7 @@ class ScheduleTests(unittest.TestCase):
                     for worker in workers:
                         worker.join(10)
                 self.assertTrue(all(not worker.is_alive() for worker in workers))
-                self.assertEqual(results, [3, 3])
+                self.assertEqual(results, [5, 5])
                 database = Database(path)
                 if version == 2:
                     self.assertEqual(database.list("terms")[0][1], "기존 학기")
@@ -260,7 +321,7 @@ class ScheduleTests(unittest.TestCase):
             upgraded = Database(path)
             self.assertEqual(upgraded.list("terms"), [(1, "기존 학기")])
             self.assertEqual(upgraded.list("cohorts", 1), [(1, "기존 반")])
-            self.assertEqual(upgraded.conn.execute("PRAGMA user_version").fetchone()[0], 3)
+            self.assertEqual(upgraded.conn.execute("PRAGMA user_version").fetchone()[0], 5)
             upgraded.conn.close()
 
 

@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 from academy_timetable.backup import backup_to, restore_from
 from academy_timetable.db import Database
 from academy_timetable.schedule import Schedule
+from legacy_db import make_legacy_fixture
 
 
 class BackupTests(unittest.TestCase):
@@ -36,16 +37,64 @@ class BackupTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_backup_and_restore_preserve_pre_restore_copy(self):
+        self.db.set_capacity("cohorts", self.cohort, 30)
+        self.db.set_facilities("subjects", self.subject, "빔프로젝터")
         backup_to(self.db, self.backup)
         self.db.add("teachers", "나중 강사")
+        self.db.set_capacity("cohorts", self.cohort, 31)
+        self.db.set_facilities("subjects", self.subject, "화이트보드")
         safety = restore_from(self.db, self.backup)
         self.assertEqual([x[1] for x in self.db.list("teachers")], ["강사"])
         self.assertEqual(len(self.schedule.lessons(self.cohort)), 1)
+        self.assertEqual(self.db.capacity_values("cohorts")[self.cohort], 30)
+        self.assertEqual(self.db.facility_values("subjects")[self.subject], "빔프로젝터")
         before = Database(safety)
         self.assertEqual([x[1] for x in before.list("teachers")], ["강사", "나중 강사"])
+        self.assertEqual(before.capacity_values("cohorts")[self.cohort], 31)
+        self.assertEqual(before.facility_values("subjects")[self.subject], "화이트보드")
         before.conn.close()
         self.assertEqual(self.db.conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
         self.assertEqual(self.db.conn.execute("PRAGMA foreign_key_check").fetchall(), [])
+
+    def test_version_three_backup_restores_with_unset_capacities(self):
+        self.db.add("rooms", "101호")
+        room = self.db.list("rooms")[0][0]
+        backup_to(self.db, self.backup)
+        connection = sqlite3.connect(self.backup)
+        make_legacy_fixture(connection, 3)
+        connection.close()
+        original = self.backup.read_bytes()
+        self.db.set_capacity("cohorts", self.cohort, 30)
+        self.db.set_capacity("rooms", room, 40)
+        safety_path = restore_from(self.db, self.backup)
+        self.assertEqual(self.backup.read_bytes(), original)
+        self.assertEqual(self.db.conn.execute("PRAGMA user_version").fetchone()[0], 5)
+        self.assertIsNone(self.db.capacity_values("cohorts")[self.cohort])
+        self.assertIsNone(self.db.capacity_values("rooms")[room])
+        self.assertEqual(len(self.schedule.lessons(self.cohort)), 1)
+        safety = Database(safety_path)
+        self.assertEqual(safety.capacity_values("rooms")[room], 40)
+        safety.conn.close()
+
+    def test_version_four_backup_preserves_capacities_with_empty_facilities(self):
+        self.db.add("rooms", "101호")
+        room = self.db.list("rooms")[0][0]
+        self.db.set_capacity("cohorts", self.cohort, 30)
+        self.db.set_capacity("rooms", room, 40)
+        backup_to(self.db, self.backup)
+        connection = sqlite3.connect(self.backup)
+        make_legacy_fixture(connection, 4)
+        connection.close()
+        original = self.backup.read_bytes()
+        self.db.set_facilities("subjects", self.subject, "빔프로젝터")
+        self.db.set_facilities("rooms", room, "빔프로젝터")
+        restore_from(self.db, self.backup)
+        self.assertEqual(self.backup.read_bytes(), original)
+        self.assertEqual(self.db.capacity_values("cohorts")[self.cohort], 30)
+        self.assertEqual(self.db.capacity_values("rooms")[room], 40)
+        self.assertEqual(self.db.facility_values("subjects")[self.subject], "")
+        self.assertEqual(self.db.facility_values("rooms")[room], "")
+        self.assertEqual(len(self.schedule.lessons(self.cohort)), 1)
 
     def test_invalid_or_same_database_rejected_without_changes(self):
         before = self.schedule.lessons(self.cohort)
@@ -145,11 +194,12 @@ class BackupTests(unittest.TestCase):
 
     def test_gui_restore_cancel_and_success(self):
         from academy_timetable.__main__ import MainWindow
+        from academy_timetable.backup_ui import BackupPage
         app = QApplication.instance() or QApplication([])
         backup_to(self.db, self.backup)
         self.db.add("teachers", "새 강사")
         window = MainWindow(self.db)
-        page = window.pages.widget(10)
+        page = window.findChild(BackupPage)
         with patch.object(QFileDialog, "getOpenFileName", return_value=(str(self.backup), "")), \
              patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.No):
             page.restore_backup()
