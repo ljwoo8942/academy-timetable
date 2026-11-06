@@ -4,6 +4,8 @@ import sqlite3
 import tempfile
 from pathlib import Path
 
+from .db import SCHEMA_VERSION
+
 class RestoreAppliedError(RuntimeError):
     """복원은 완료됐으나 후속 정리에 실패한 상태."""
 
@@ -11,14 +13,17 @@ class RestoreAppliedError(RuntimeError):
 TABLES = {
     "terms": ("id", "name"),
     "teachers": ("id", "name"),
-    "subjects": ("id", "name", "active"),
-    "rooms": ("id", "name"),
-    "cohorts": ("id", "term_id", "name"),
+    "subjects": ("id", "name", "active", "required_facilities"),
+    "rooms": ("id", "name", "capacity", "facilities"),
+    "cohorts": ("id", "term_id", "name", "student_count"),
     "periods": ("term_id", "number", "start", "end"),
     "quotas": ("cohort_id", "subject_id", "weekly_periods", "session_length"),
     "lessons": ("id", "cohort_id", "subject_id", "teacher_id", "room_id", "weekday", "start_period", "length", "locked"),
     "teacher_availability": ("term_id", "teacher_id", "weekday", "period", "status"),
 }
+VERSION_4_TABLES = {**TABLES, "subjects": ("id", "name", "active"), "rooms": ("id", "name", "capacity")}
+VERSION_3_TABLES = {**VERSION_4_TABLES, "rooms": ("id", "name"), "cohorts": ("id", "term_id", "name")}
+BACKUP_SCHEMAS = {3: VERSION_3_TABLES, 4: VERSION_4_TABLES, SCHEMA_VERSION: TABLES}
 
 
 def database_path(db):
@@ -72,19 +77,22 @@ def backup_to(db, destination):
 
 
 def _check_backup(connection):
-    if connection.execute("PRAGMA user_version").fetchone()[0] != 3:
-        raise ValueError("이 프로그램의 데이터베이스 버전 3 백업만 복원할 수 있습니다.")
+    version = connection.execute("PRAGMA user_version").fetchone()[0]
+    if version not in BACKUP_SCHEMAS:
+        raise ValueError("데이터베이스 버전 3, 4 또는 5 백업을 선택하세요.")
+    expected = BACKUP_SCHEMAS[version]
     if connection.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
         raise ValueError("백업 파일의 무결성 검사에 실패했습니다.")
     if connection.execute("PRAGMA foreign_key_check").fetchone():
         raise ValueError("백업 파일의 연결 정보가 올바르지 않습니다.")
     tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT GLOB 'sqlite_*'")}
-    if tables != set(TABLES):
+    if tables != set(expected):
         raise ValueError("백업 파일의 테이블 구성이 이 프로그램과 다릅니다.")
-    for table, columns in TABLES.items():
+    for table, columns in expected.items():
         found = tuple(row[1] for row in connection.execute(f"PRAGMA table_info({table})"))
         if found != columns:
             raise ValueError(f"백업 파일의 {table} 구조가 올바르지 않습니다.")
+    return expected
 
 
 def restore_from(db, source_path):
@@ -107,7 +115,7 @@ def restore_from(db, source_path):
             staged = sqlite3.connect(staging)
             try:
                 _copy(source, staged)
-                _check_backup(staged)
+                source_tables = _check_backup(staged)
             finally:
                 staged.close()
         finally:
@@ -132,14 +140,13 @@ def restore_from(db, source_path):
             attached = True
             for table in reversed(TABLES):
                 db.conn.execute(f"DELETE FROM main.{table}")
-            for table, columns in TABLES.items():
+            for table, columns in source_tables.items():
                 names = ", ".join(columns)
                 db.conn.execute(f"INSERT INTO main.{table} ({names}) SELECT {names} FROM restore_source.{table}")
             if db.conn.execute("PRAGMA main.foreign_key_check").fetchone():
                 raise ValueError("복원 데이터의 연결 정보가 올바르지 않습니다.")
             # 다른 창이 복원 전 식별자로 쓰지 못하도록 데이터와 함께 세대를 갱신한다.
-            next_generation = (db.restore_generation + 1) % 2147483647
-            db.conn.execute(f"PRAGMA application_id = {next_generation}")
+            next_generation = db.advance_generation()
             db.conn.commit()
             db.restore_generation = next_generation
             applied = True

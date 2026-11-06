@@ -8,11 +8,11 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QFrame, QH
                                QMessageBox, QPushButton, QScrollArea, QStackedWidget, QTableWidget,
                                QTableWidgetItem, QVBoxLayout, QWidget)
 from .backup_ui import BackupPage
-from .db import Database
+from .db import CAPACITY_COLUMNS, FACILITY_COLUMNS, MAX_CAPACITY, Database, facility_tags
 from .excel_export import export_timetable
 from .import_ui import ImportDialog
 from .review_ui import ReviewPage
-from .schedule_ui import SchedulePage, TeacherAvailabilityPage, TeacherLoadPage
+from .schedule_ui import RoomAssignmentPage, SchedulePage, TeacherAvailabilityPage, TeacherLoadPage
 
 
 STYLE = """
@@ -92,6 +92,7 @@ class MainWindow(QMainWindow):
             ("teacher_load", "강사 시수 관리", "강사별 과목 배정 시수를 확인합니다."),
             ("availability", "강사 가능 시간", "학기별 강사 가능 시간을 설정합니다."),
             ("review", "초안 검토", "저장된 시간표의 시수와 기본 충돌을 확인합니다."),
+            ("room_assignment", "강의실 배정", "저장된 수업의 강의실을 지정하거나 변경합니다."),
             ("backup", "백업·복원", "저장된 데이터를 백업하거나 복원합니다."),
         ]
         self.lists = {}
@@ -118,6 +119,9 @@ class MainWindow(QMainWindow):
             elif table == "review":
                 self.review_page = ReviewPage(db)
                 self.pages.addWidget(self.review_page)
+            elif table == "room_assignment":
+                self.room_assignment_page = RoomAssignmentPage(db)
+                self.pages.addWidget(self.room_assignment_page)
             elif table == "backup":
                 self.pages.addWidget(BackupPage(db, self))
             else:
@@ -215,8 +219,13 @@ class MainWindow(QMainWindow):
         toolbar = QHBoxLayout()
         toolbar.addWidget(QLabel(title + " 목록", objectName="cardTitle"))
         toolbar.addStretch()
-        for label, action in (("+ 추가", "add"), ("이름 수정", "rename"),
-                              ("활성/비활성" if table == "subjects" else "삭제", "remove")):
+        actions = [("+ 추가", "add"), ("이름 수정", "rename")]
+        if table in CAPACITY_COLUMNS:
+            actions.append(("인원 설정" if table == "cohorts" else "정원 설정", "capacity"))
+        if table in FACILITY_COLUMNS:
+            actions.append(("시설 설정", "facilities"))
+        actions.append(("활성/비활성" if table == "subjects" else "삭제", "remove"))
+        for label, action in actions:
             button = QPushButton(label)
             if action == "add":
                 button.setObjectName("primary")
@@ -267,6 +276,10 @@ class MainWindow(QMainWindow):
             self.availability_page.set_term(self.term.currentData())
         elif self.page_info[index][0] == "review":
             self.review_page.set_term(self.term.currentData())
+        elif self.page_info[index][0] == "room_assignment":
+            self.room_assignment_page.set_term(self.term.currentData())
+        elif self.page_info[index][0] == "schedule":
+            self.schedule_page.refresh()
         self.pages.setCurrentIndex(index)
         self.nav.button(index).setChecked(True)
         self.side_scroll.ensureWidgetVisible(self.nav.button(index))
@@ -296,8 +309,20 @@ class MainWindow(QMainWindow):
     def refresh_list(self, table):
         listing = self.lists[table]
         listing.clear()
+        capacities = self.db.capacity_values(table) if table in CAPACITY_COLUMNS else {}
+        facilities = self.db.facility_values(table) if table in FACILITY_COLUMNS else {}
         for row in self.db.list(table, self.term.currentData()):
-            item = QListWidgetItem(row[1] + (" (비활성)" if table == "subjects" and not row[2] else ""))
+            text = row[1] + (" (비활성)" if table == "subjects" and not row[2] else "")
+            if table in CAPACITY_COLUMNS:
+                field = "인원" if table == "cohorts" else "정원"
+                value = capacities.get(row[0])
+                display = f"{value}명" if value is not None else "미설정"
+                text += f" · {field} {display}"
+            if table in FACILITY_COLUMNS:
+                field = "필수 시설" if table == "subjects" else "보유 시설"
+                display = ", ".join(facility_tags(facilities.get(row[0], ""))) or "등록 없음"
+                text += f" · {field} {display}"
+            item = QListWidgetItem(text)
             item.setData(Qt.ItemDataRole.UserRole, row[0])
             listing.addItem(item)
 
@@ -348,6 +373,7 @@ class MainWindow(QMainWindow):
         self.teacher_load_page.refresh(self.term.currentData())
         self.availability_page.set_term(self.term.currentData())
         self.review_page.set_term(self.term.currentData())
+        self.room_assignment_page.set_term(self.term.currentData())
 
     def edit(self, table, action):
         if not self.discard_period_changes():
@@ -367,6 +393,20 @@ class MainWindow(QMainWindow):
                     self.db.add(table, name, self.term.currentData())
                 else:
                     self.db.rename(table, row_id, name)
+            elif action == "capacity":
+                field = "반 인원" if table == "cohorts" else "강의실 정원"
+                current = self.db.capacity_values(table).get(row_id)
+                value, ok = QInputDialog.getInt(self, f"{field} 설정", f"{field} (0은 미설정)", current or 0, 0, MAX_CAPACITY)
+                if not ok:
+                    return
+                self.db.set_capacity(table, row_id, value or None)
+            elif action == "facilities":
+                field = "필수 시설" if table == "subjects" else "보유 시설"
+                current = self.db.facility_values(table).get(row_id, "")
+                value, ok = QInputDialog.getMultiLineText(self, f"{field} 설정", "시설 이름을 줄바꿈이나 쉼표로 구분하세요.", current)
+                if not ok:
+                    return
+                self.db.set_facilities(table, row_id, value)
             else:
                 message = "선택한 항목을 삭제하시겠습니까?"
                 if table == "terms":

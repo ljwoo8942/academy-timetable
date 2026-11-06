@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from academy_timetable.db import Database, DEFAULT_PERIODS, validate_periods
+from legacy_db import make_legacy_fixture
 
 
 class DatabaseTests(unittest.TestCase):
@@ -54,6 +55,21 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(db.periods(term_id), [])
         self.assertEqual(db.list("cohorts", term_id), [])
         db.conn.close()
+
+    def test_version_three_upgrade_preserves_rooms_and_invalidates_old_sessions(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "data.sqlite3"
+            old = Database(path)
+            old.add("rooms", "101호")
+            room = old.list("rooms")[0][0]
+            make_legacy_fixture(old.conn, 3)
+            updated = Database(path)
+            self.assertEqual(updated.list("rooms"), [(room, "101호")])
+            self.assertIsNone(updated.capacity_values("rooms")[room])
+            with self.assertRaisesRegex(ValueError, "저장 형식을 갱신"):
+                old.rename("rooms", room, "바뀐 이름")
+            updated.conn.close()
+            old.conn.close()
 
 
 if __name__ == "__main__":

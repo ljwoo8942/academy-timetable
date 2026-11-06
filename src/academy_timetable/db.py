@@ -9,6 +9,19 @@ DEFAULT_PERIODS = (
     ("19:40", "20:30"), ("20:40", "21:30"),
 )
 TABLES = {"terms", "cohorts", "teachers", "subjects", "rooms"}
+SCHEMA_VERSION = 5
+CAPACITY_COLUMNS = {"cohorts": "student_count", "rooms": "capacity"}
+FACILITY_COLUMNS = {"subjects": "required_facilities", "rooms": "facilities"}
+MAX_CAPACITY = 2147483647
+
+
+def facility_tags(text):
+    tags = {}
+    for field in text.replace(",", "\n").splitlines():
+        name = field.strip()
+        if name:
+            tags.setdefault(name.casefold(), name)
+    return tuple(tags.values())
 
 
 def minutes(value):
@@ -37,13 +50,13 @@ class Database:
         self.conn = sqlite3.connect(path)
         self.conn.execute("PRAGMA foreign_keys = ON")
         version = self.conn.execute("PRAGMA user_version").fetchone()[0]
-        if version > 3:
+        if version > SCHEMA_VERSION:
             raise RuntimeError("이 프로그램보다 새로운 데이터베이스입니다.")
-        if version < 3:
+        if version < SCHEMA_VERSION:
             self.conn.execute("BEGIN IMMEDIATE")
             with self.conn:
                 version = self.conn.execute("PRAGMA user_version").fetchone()[0]
-                if version > 3:
+                if version > SCHEMA_VERSION:
                     raise RuntimeError("이 프로그램보다 새로운 데이터베이스입니다.")
                 if version == 0:
                     self.conn.execute("CREATE TABLE terms (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE)")
@@ -80,12 +93,26 @@ class Database:
                         period INTEGER NOT NULL CHECK(period BETWEEN 1 AND 11),
                         status TEXT NOT NULL CHECK(status IN ('AVAILABLE', 'UNAVAILABLE')),
                         PRIMARY KEY(term_id, teacher_id, weekday, period))""")
-                self.conn.execute("PRAGMA user_version = 3")
+                if version < 4:
+                    for table, column in CAPACITY_COLUMNS.items():
+                        self.conn.execute(f"""ALTER TABLE {table} ADD COLUMN {column} INTEGER
+                            CHECK({column} IS NULL OR (typeof({column}) = 'integer' AND {column} BETWEEN 1 AND {MAX_CAPACITY}))""")
+                if version < 5:
+                    for table, column in FACILITY_COLUMNS.items():
+                        self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
+                    if version in (3, 4):
+                        self.advance_generation()
+                    self.conn.execute("PRAGMA user_version = 5")
         self.restore_generation = self.conn.execute("PRAGMA application_id").fetchone()[0]
+
+    def advance_generation(self):
+        generation = (self.conn.execute("PRAGMA application_id").fetchone()[0] + 1) % 2147483647
+        self.conn.execute(f"PRAGMA application_id = {generation}")
+        return generation
 
     def assert_current(self):
         if self.conn.execute("PRAGMA application_id").fetchone()[0] != self.restore_generation:
-            raise ValueError("다른 창에서 데이터를 복원했습니다. 프로그램을 다시 시작한 뒤 작업하세요.")
+            raise ValueError("다른 창에서 데이터를 복원하거나 저장 형식을 갱신했습니다. 프로그램을 다시 시작한 뒤 작업하세요.")
 
     @contextmanager
     def transaction(self):
@@ -133,6 +160,31 @@ class Database:
                 self.conn.execute("UPDATE subjects SET active = 1 - active WHERE id = ?", (row_id,))
             else:
                 self.conn.execute(f"DELETE FROM {table} WHERE id = ?", (row_id,))
+
+    def capacity_values(self, table):
+        column = CAPACITY_COLUMNS[table]
+        return dict(self.conn.execute(f"SELECT id, {column} FROM {table}"))
+
+    def set_capacity(self, table, row_id, value):
+        column = CAPACITY_COLUMNS[table]
+        if value is not None and (type(value) is not int or not 1 <= value <= MAX_CAPACITY):
+            raise ValueError("입력 가능한 양의 정수를 선택하거나 미설정으로 두세요.")
+        with self.transaction():
+            result = self.conn.execute(f"UPDATE {table} SET {column}=? WHERE id=?", (value, row_id))
+            if result.rowcount != 1:
+                raise ValueError("선택한 항목을 찾을 수 없습니다.")
+
+    def facility_values(self, table):
+        column = FACILITY_COLUMNS[table]
+        return dict(self.conn.execute(f"SELECT id, {column} FROM {table}"))
+
+    def set_facilities(self, table, row_id, text):
+        column = FACILITY_COLUMNS[table]
+        with self.transaction():
+            value = "\n".join(facility_tags(text))
+            result = self.conn.execute(f"UPDATE {table} SET {column}=? WHERE id=?", (value, row_id))
+            if result.rowcount != 1:
+                raise ValueError("선택한 항목을 찾을 수 없습니다.")
 
     def periods(self, term_id):
         return self.conn.execute("SELECT start, end FROM periods WHERE term_id = ? ORDER BY number", (term_id,)).fetchall()

@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QApplication, QDialog, QInputDialog, QMessageBox
 
 from academy_timetable.__main__ import MainWindow
 from academy_timetable.db import Database
+from academy_timetable.schedule import Schedule
 
 
 class GuiTests(unittest.TestCase):
@@ -124,6 +125,53 @@ class GuiTests(unittest.TestCase):
         self.assertTrue(any(page.table.item(row, 1).text() == "시수 미설정" for row in range(page.table.rowCount())))
         self.window.term.setCurrentIndex(1)
         self.assertFalse(any("A반" in page.table.item(row, 2).text() for row in range(page.table.rowCount())))
+
+    def test_room_assignment_saves_to_the_timetable_and_follows_the_selected_term(self):
+        term = self.window.term.currentData()
+        self.db.add("cohorts", "A반", term)
+        self.db.add("subjects", "수학")
+        self.db.add("teachers", "강사")
+        self.db.add("rooms", "101호")
+        self.db.add("rooms", "102호")
+        self.db.add("rooms", "103호")
+        cohort = self.db.list("cohorts", term)[0][0]
+        subject = self.db.list("subjects")[0][0]
+        teacher = self.db.list("teachers")[0][0]
+        room = self.db.list("rooms")[0][0]
+        schedule = Schedule(self.db)
+        schedule.save_quota(cohort, subject, 2, 2)
+        schedule.assign(cohort, subject, teacher, None, 0, 1)
+        self.window.refresh_all()
+        self.window.lists["cohorts"].setCurrentRow(0)
+        with patch.object(QInputDialog, "getInt", return_value=(30, True)):
+            self.window.edit("cohorts", "capacity")
+        self.assertIn("인원 30명", self.window.lists["cohorts"].item(0).text())
+        self.window.lists["rooms"].setCurrentRow(1)
+        with patch.object(QInputDialog, "getInt", return_value=(20, True)):
+            self.window.edit("rooms", "capacity")
+        self.assertIn("정원 20명", self.window.lists["rooms"].item(1).text())
+        self.window.lists["subjects"].setCurrentRow(0)
+        with patch.object(QInputDialog, "getMultiLineText", return_value=("빔프로젝터", True)):
+            self.window.edit("subjects", "facilities")
+        self.assertIn("필수 시설 빔프로젝터", self.window.lists["subjects"].item(0).text())
+        for row in (0, 1):
+            self.window.lists["rooms"].setCurrentRow(row)
+            with patch.object(QInputDialog, "getMultiLineText", return_value=("빔프로젝터", True)):
+                self.window.edit("rooms", "facilities")
+        page = self.window.room_assignment_page
+        self.window.nav.button(self.window.pages.indexOf(page)).click()
+        self.assertIn("미배정 1개", page.summary.text())
+        page.table.selectRow(0)
+        self.assertEqual(page.room.count(), 2)
+        self.assertIn("필수 시설 빔프로젝터", page.hint.text())
+        page.room.setCurrentIndex(page.room.findData(room))
+        page.save_button.click()
+        self.assertIn("미배정 0개", page.summary.text())
+        self.window.nav.button(6).click()
+        for period in (0, 1):
+            self.assertIn("101호", self.window.schedule_page.grid.item(period, 0).text())
+        self.window.term.setCurrentIndex(1)
+        self.assertEqual(page.table.rowCount(), 0)
 
 
 if __name__ == "__main__":

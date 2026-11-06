@@ -59,6 +59,29 @@ class DraftReviewTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             review_draft(self.db, None)
 
+    def test_room_capacity_changes_are_flagged_without_changing_existing_lessons(self):
+        self.schedule.save_quota(self.cohort, self.subject, 2, 2)
+        self.schedule.assign(self.cohort, self.subject, self.teacher, self.room, 0, 1)
+        issues = review_draft(self.db, self.term)
+        self.assertIn(("확인 필요", "인원·정원 미설정"), [(status, kind) for status, kind, _ in issues])
+        self.db.set_capacity("cohorts", self.cohort, 30)
+        self.db.set_capacity("rooms", self.room, 29)
+        issues = review_draft(self.db, self.term)
+        error = next(detail for status, kind, detail in issues if status == "오류" and kind == "강의실 정원 부족")
+        self.assertIn("반 인원 30명, 정원 29명", error)
+        self.assertEqual(self.schedule.room_lessons(self.term)[0].room_id, self.room)
+
+    def test_new_facility_requirements_flag_existing_lessons(self):
+        self.schedule.save_quota(self.cohort, self.subject, 2, 2)
+        self.schedule.assign(self.cohort, self.subject, self.teacher, self.room, 0, 1)
+        self.db.set_facilities("subjects", self.subject, "빔프로젝터")
+        issues = review_draft(self.db, self.term)
+        detail = next(detail for status, kind, detail in issues if status == "오류" and kind == "강의실 필수 시설 부족")
+        self.assertIn("101호: 빔프로젝터", detail)
+        self.assertEqual(self.schedule.room_lessons(self.term)[0].room_id, self.room)
+        self.db.set_facilities("rooms", self.room, "빔프로젝터")
+        self.assertNotIn("강의실 필수 시설 부족", {kind for _, kind, _ in review_draft(self.db, self.term)})
+
 
 if __name__ == "__main__":
     unittest.main()
