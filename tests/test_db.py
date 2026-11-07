@@ -71,6 +71,32 @@ class DatabaseTests(unittest.TestCase):
             updated.conn.close()
             old.conn.close()
 
+    def test_version_five_upgrade_and_teacher_subject_changes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "data.sqlite3"
+            old = Database(path)
+            old.add("subjects", "수학")
+            old.add("teachers", "김강사")
+            subject = old.list("subjects")[0][0]
+            teacher = old.list("teachers")[0][0]
+            old.set_facilities("subjects", subject, "빔프로젝터")
+            make_legacy_fixture(old.conn, 5)
+            db = Database(path)
+            self.assertEqual(db.facility_values("subjects")[subject], "빔프로젝터")
+            self.assertEqual(db.eligible_teachers(subject), set())
+            with self.assertRaisesRegex(ValueError, "저장 형식을 갱신"):
+                old.rename("teachers", teacher, "바뀐 이름")
+            db.set_eligible_teachers(subject, {teacher}, expected=set())
+            with self.assertRaisesRegex(ValueError, "설정이 변경"):
+                db.set_eligible_teachers(subject, set(), expected=set())
+            with self.assertRaisesRegex(ValueError, "강사를 찾을 수 없"):
+                db.set_eligible_teachers(subject, {teacher + 1}, expected={teacher})
+            self.assertEqual(db.eligible_teachers(subject), {teacher})
+            db.remove("teachers", teacher)
+            self.assertEqual(db.eligible_teachers(subject), set())
+            db.conn.close()
+            old.conn.close()
+
 
 if __name__ == "__main__":
     unittest.main()

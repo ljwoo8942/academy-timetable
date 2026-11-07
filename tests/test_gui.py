@@ -3,7 +3,9 @@ import unittest
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6.QtWidgets import QApplication, QDialog, QInputDialog, QMessageBox
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QInputDialog, QListWidget,
+                               QMessageBox, QPushButton, QTableWidget)
 
 from academy_timetable.__main__ import MainWindow
 from academy_timetable.db import Database
@@ -84,6 +86,54 @@ class GuiTests(unittest.TestCase):
         self.assertEqual(load_table.item(1, 2).text(), "2")
         self.window.term.setCurrentIndex(1)
         self.assertEqual(load_table.item(0, 1).text(), "0")
+
+    def test_subject_teacher_settings_filter_the_assignment_dialog(self):
+        term = self.window.term.currentData()
+        self.db.add("cohorts", "A반", term)
+        for name in ("수학", "영어"):
+            self.db.add("subjects", name)
+        for name in ("김강사", "이강사"):
+            self.db.add("teachers", name)
+        cohort = self.db.list("cohorts", term)[0][0]
+        math, english = [row[0] for row in self.db.list("subjects")]
+        first, second = [row[0] for row in self.db.list("teachers")]
+        schedule = Schedule(self.db)
+        schedule.save_quota(cohort, math, 2, 2)
+        schedule.save_quota(cohort, english, 1, 1)
+        self.db.set_eligible_teachers(english, {first}, expected=set())
+        self.window.refresh_all()
+        self.window.nav.button(3).click()
+        subjects_list = self.window.lists["subjects"]
+        subjects_list.setCurrentRow(0)
+        button = next(b for b in self.window.pages.currentWidget().findChildren(QPushButton)
+                      if b.text() == "담당 강사 설정")
+
+        def save_settings(dialog):
+            dialog.findChild(QListWidget).item(1).setCheckState(Qt.CheckState.Checked)
+            return QDialog.DialogCode.Accepted
+
+        with patch.object(QDialog, "exec", new=save_settings):
+            button.click()
+        self.assertIn("담당 강사 1명", subjects_list.item(0).text())
+        self.assertEqual(self.db.eligible_teachers(math), {second})
+
+        self.window.nav.button(6).click()
+        page = self.window.schedule_page
+        page.grid.setCurrentCell(0, 0)
+        seen = []
+
+        def inspect_assignment(dialog):
+            boxes = {box.accessibleName(): box for box in dialog.findChildren(QComboBox)}
+            teachers = boxes["배정 강사"]
+            seen.append([teachers.itemData(i) for i in range(teachers.count())])
+            subjects = boxes["배정 과목"]
+            subjects.setCurrentIndex(subjects.findData(english))
+            seen.append([teachers.itemData(i) for i in range(teachers.count())])
+            return QDialog.DialogCode.Rejected
+
+        with patch.object(QDialog, "exec", new=inspect_assignment):
+            page.edit_lesson()
+        self.assertEqual(seen, [[second], [first]])
 
     def test_availability_page_updates_and_blocks_conflict(self):
         term = self.window.term.currentData()
@@ -172,6 +222,40 @@ class GuiTests(unittest.TestCase):
             self.assertIn("101호", self.window.schedule_page.grid.item(period, 0).text())
         self.window.term.setCurrentIndex(1)
         self.assertEqual(page.table.rowCount(), 0)
+
+    def test_room_suggestions_preview_cancel_and_apply(self):
+        term = self.window.term.currentData()
+        self.db.add("cohorts", "A반", term)
+        self.db.add("subjects", "수학")
+        self.db.add("teachers", "강사")
+        self.db.add("rooms", "101호")
+        cohort = self.db.list("cohorts", term)[0][0]
+        subject = self.db.list("subjects")[0][0]
+        teacher = self.db.list("teachers")[0][0]
+        room = self.db.list("rooms")[0][0]
+        self.db.set_capacity("cohorts", cohort, 25)
+        self.db.set_capacity("rooms", room, 30)
+        schedule = Schedule(self.db)
+        schedule.save_quota(cohort, subject, 2, 2)
+        schedule.assign(cohort, subject, teacher, None, 0, 1)
+        page = self.window.room_assignment_page
+        self.window.nav.button(self.window.pages.indexOf(page)).click()
+
+        displayed = []
+
+        def cancel_preview(dialog):
+            preview = dialog.findChild(QTableWidget)
+            displayed.extend((preview.item(0, 0).text(), preview.item(0, 4).text(), schedule.room_lessons(term)[0].room_id))
+            return QDialog.DialogCode.Rejected
+
+        with patch.object(QDialog, "exec", new=cancel_preview):
+            page.suggest_button.click()
+        self.assertEqual(displayed, ["월 1~2교시", "101호", None])
+        self.assertIsNone(schedule.room_lessons(term)[0].room_id)
+        with patch.object(QDialog, "exec", return_value=QDialog.DialogCode.Accepted):
+            page.suggest_button.click()
+        self.assertEqual(page.table.item(0, 4).text(), "101호")
+        self.assertFalse(page.suggest_button.isEnabled())
 
 
 if __name__ == "__main__":

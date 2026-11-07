@@ -18,7 +18,7 @@ class ReviewPage(QFrame):
         button.clicked.connect(self.refresh)
         top.addWidget(button)
         box.addLayout(top)
-        notice = QLabel("저장된 초안을 기준으로 시수·기본 중복·강사 가능 시간·강의실을 확인합니다. 확인되지 않은 규칙은 결과가 없어도 통과한 것이 아닙니다.", objectName="muted")
+        notice = QLabel("저장된 초안의 시수·기본 중복·등록된 담당 강사·강사 가능 시간·강의실을 확인합니다. 확인되지 않은 규칙은 결과가 없어도 통과한 것이 아닙니다.", objectName="muted")
         notice.setWordWrap(True)
         box.addWidget(notice)
         self.summary = QLabel()

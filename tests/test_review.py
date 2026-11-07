@@ -82,6 +82,23 @@ class DraftReviewTests(unittest.TestCase):
         self.db.set_facilities("rooms", self.room, "빔프로젝터")
         self.assertNotIn("강의실 필수 시설 부족", {kind for _, kind, _ in review_draft(self.db, self.term)})
 
+    def test_configured_teacher_restrictions_block_assignment_and_flag_existing_lessons(self):
+        self.db.add("teachers", "이강사")
+        eligible = self.db.list("teachers")[1][0]
+        self.schedule.save_quota(self.cohort, self.subject, 4, 2)
+        self.schedule.assign(self.cohort, self.subject, self.teacher, None, 0, 1)
+        before = self.schedule.lessons(self.cohort)
+        self.db.set_eligible_teachers(self.subject, {eligible}, expected=set())
+        with self.assertRaisesRegex(ValueError, "담당 강사로 등록되지"):
+            self.schedule.assign(self.cohort, self.subject, self.teacher, None, 1, 1)
+        with self.assertRaisesRegex(ValueError, "담당 강사로 등록되지"):
+            self.schedule.assign(self.cohort, self.subject, self.teacher, None, 0, 3, before[0][0])
+        issues = review_draft(self.db, self.term)
+        self.assertIn(("오류", "담당 강사 불일치", "A반 · 수학 · 김강사 · 월요일 1~2교시"), issues)
+        self.assertEqual(self.schedule.lessons(self.cohort), before)
+        self.schedule.assign(self.cohort, self.subject, eligible, None, 0, 1, before[0][0])
+        self.assertNotIn("담당 강사 불일치", {kind for _, kind, _ in review_draft(self.db, self.term)})
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -10,7 +10,7 @@ class RestoreAppliedError(RuntimeError):
     """복원은 완료됐으나 후속 정리에 실패한 상태."""
 
 
-TABLES = {
+VERSION_5_TABLES = {
     "terms": ("id", "name"),
     "teachers": ("id", "name"),
     "subjects": ("id", "name", "active", "required_facilities"),
@@ -21,9 +21,10 @@ TABLES = {
     "lessons": ("id", "cohort_id", "subject_id", "teacher_id", "room_id", "weekday", "start_period", "length", "locked"),
     "teacher_availability": ("term_id", "teacher_id", "weekday", "period", "status"),
 }
-VERSION_4_TABLES = {**TABLES, "subjects": ("id", "name", "active"), "rooms": ("id", "name", "capacity")}
+TABLES = {**VERSION_5_TABLES, "teacher_subjects": ("subject_id", "teacher_id")}
+VERSION_4_TABLES = {**VERSION_5_TABLES, "subjects": ("id", "name", "active"), "rooms": ("id", "name", "capacity")}
 VERSION_3_TABLES = {**VERSION_4_TABLES, "rooms": ("id", "name"), "cohorts": ("id", "term_id", "name")}
-BACKUP_SCHEMAS = {3: VERSION_3_TABLES, 4: VERSION_4_TABLES, SCHEMA_VERSION: TABLES}
+BACKUP_SCHEMAS = {3: VERSION_3_TABLES, 4: VERSION_4_TABLES, 5: VERSION_5_TABLES, SCHEMA_VERSION: TABLES}
 
 
 def database_path(db):
@@ -79,7 +80,7 @@ def backup_to(db, destination):
 def _check_backup(connection):
     version = connection.execute("PRAGMA user_version").fetchone()[0]
     if version not in BACKUP_SCHEMAS:
-        raise ValueError("데이터베이스 버전 3, 4 또는 5 백업을 선택하세요.")
+        raise ValueError(f"데이터베이스 버전 3~{SCHEMA_VERSION} 백업을 선택하세요.")
     expected = BACKUP_SCHEMAS[version]
     if connection.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
         raise ValueError("백업 파일의 무결성 검사에 실패했습니다.")

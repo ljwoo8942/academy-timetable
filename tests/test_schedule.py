@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from academy_timetable.db import Database
+from academy_timetable.db import Database, SCHEMA_VERSION
 from academy_timetable.schedule import Schedule
 from legacy_db import make_legacy_fixture
 
@@ -147,6 +147,56 @@ class ScheduleTests(unittest.TestCase):
         s.assign_room(self.term, lesson, self.r2)
         self.assertEqual(s.room_lessons(self.term)[0].room_id, self.r2)
 
+    def test_room_suggestions_respect_capacity_facilities_and_every_period(self):
+        s = self.schedule
+        self.db.add("rooms", "103")
+        r3 = self.db.list("rooms")[2][0]
+        for cohort in (self.a, self.b):
+            self.db.set_capacity("cohorts", cohort, 30)
+        for room, capacity in ((self.r1, 20), (self.r2, 30), (r3, 40)):
+            self.db.set_capacity("rooms", room, capacity)
+        for room in (self.r1, self.r2):
+            self.db.set_facilities("rooms", room, "HDMI")
+        for subject in (self.math, self.english):
+            self.db.set_facilities("subjects", subject, "HDMI")
+        s.assign(self.a, self.math, self.t1, None, 0, 1)
+        s.assign(self.b, self.english, self.t2, None, 0, 2)
+        s.assign(self.a, self.math, self.t1, None, 1, 1)
+        s.assign(self.b, self.english, self.t2, self.r2, 1, 2)
+
+        before = s.room_lessons(self.term)
+        suggestions = s.suggest_rooms(self.term)
+        self.assertEqual(s.room_lessons(self.term), before)
+        self.assertEqual([row.room_id for row in suggestions], [self.r2, None, None])
+        self.assertIn("다른 수업", suggestions[1].result)
+        self.assertIn("빈 강의실 없음", suggestions[2].result)
+        s.apply_room_suggestions(self.term, suggestions)
+        expected = {row.id: row for row in before}
+        lesson = suggestions[0].lesson
+        expected[lesson.id] = lesson._replace(room_id=self.r2, room="102")
+        self.assertEqual({row.id: row for row in s.room_lessons(self.term)}, expected)
+
+    def test_room_suggestions_skip_unknowns_and_apply_atomically_after_recheck(self):
+        s = self.schedule
+        s.assign(self.a, self.math, self.t1, None, 0, 1)
+        s.assign(self.b, self.english, self.t2, None, 1, 1)
+        self.db.set_capacity("cohorts", self.b, 25)
+        self.assertEqual([row.result for row in s.suggest_rooms(self.term)],
+                         ["반 인원 미설정", "후보 강의실 정원 미설정"])
+
+        self.db.set_capacity("cohorts", self.a, 30)
+        self.db.set_capacity("rooms", self.r1, 30)
+        suggestions = s.suggest_rooms(self.term)
+        self.assertEqual([row.room_id for row in suggestions], [self.r1, self.r1])
+        s.lock(suggestions[1].lesson.id, True)
+        with self.assertRaisesRegex(ValueError, "제안 결과가 변경"):
+            s.apply_room_suggestions(self.term, suggestions)
+        self.assertTrue(all(row.room_id is None for row in s.room_lessons(self.term)))
+        updated = s.suggest_rooms(self.term)
+        self.assertEqual(updated[1].result, "수업 잠김")
+        s.apply_room_suggestions(self.term, updated)
+        self.assertEqual([row.room_id for row in s.room_lessons(self.term)], [None, self.r1])
+
     def test_concurrent_assignments_cannot_exceed_quota(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "shared.sqlite3"
@@ -244,7 +294,7 @@ class ScheduleTests(unittest.TestCase):
             make_legacy_fixture(old.conn, 2)
             old.conn.close()
             upgraded = Database(path)
-            self.assertEqual(upgraded.conn.execute("PRAGMA user_version").fetchone()[0], 5)
+            self.assertEqual(upgraded.conn.execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION)
             self.assertEqual(len(Schedule(upgraded).lessons(cohort)), 1)
             self.assertEqual(Schedule(upgraded).quotas(cohort)[0][4], 2)
             self.assertEqual(upgraded.conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
@@ -298,7 +348,7 @@ class ScheduleTests(unittest.TestCase):
                     for worker in workers:
                         worker.join(10)
                 self.assertTrue(all(not worker.is_alive() for worker in workers))
-                self.assertEqual(results, [5, 5])
+                self.assertEqual(results, [SCHEMA_VERSION, SCHEMA_VERSION])
                 database = Database(path)
                 if version == 2:
                     self.assertEqual(database.list("terms")[0][1], "기존 학기")
@@ -321,7 +371,7 @@ class ScheduleTests(unittest.TestCase):
             upgraded = Database(path)
             self.assertEqual(upgraded.list("terms"), [(1, "기존 학기")])
             self.assertEqual(upgraded.list("cohorts", 1), [(1, "기존 반")])
-            self.assertEqual(upgraded.conn.execute("PRAGMA user_version").fetchone()[0], 5)
+            self.assertEqual(upgraded.conn.execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION)
             upgraded.conn.close()
 
 
