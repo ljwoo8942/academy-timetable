@@ -11,6 +11,11 @@ if ($LASTEXITCODE -ne 0 -or !$db -or (Test-Path -LiteralPath $db) -or (Test-Path
 $rulePrefix = 'AcademyTimetable-CI-' + [Guid]::NewGuid().ToString('N')
 $working = Join-Path $env:RUNNER_TEMP $rulePrefix
 $app = $null
+function Get-TimetableDataHash {
+    $value = & $python -c 'import hashlib,sqlite3,sys; from pathlib import Path; db=sqlite3.connect(Path(sys.argv[1]).resolve().as_uri()+"?mode=ro",uri=True); db.execute("BEGIN"); print(hashlib.sha256("\n".join(db.iterdump()).encode("utf-8")).hexdigest()); db.close()' $db
+    if ($LASTEXITCODE -ne 0) { throw 'Could not read the timetable data snapshot.' }
+    return $value
+}
 New-Item -ItemType Directory -Path $working | Out-Null
 try {
     foreach ($file in @($setup, $executable)) {
@@ -64,7 +69,7 @@ try {
     }
     & $python -c 'import sqlite3, sys; from academy_timetable.db import SCHEMA_VERSION; db = sqlite3.connect(sys.argv[1]); assert db.execute("PRAGMA user_version").fetchone() == (SCHEMA_VERSION,); db.execute("INSERT INTO terms(name) VALUES (?)", ("Installer preservation check",)); db.commit(); db.close()' $db
     if ($LASTEXITCODE -ne 0) { throw 'Installed app database check failed.' }
-    $databaseHash = (Get-FileHash -LiteralPath $db).Hash
+    $updateDataHash = Get-TimetableDataHash
     $updateStage = Join-Path $working 'update'
     New-Item -ItemType Directory -Path $updateStage | Out-Null
     $settings = @{ mode = 'windows-installer'; payload = $setup; target = $executable;
@@ -90,7 +95,7 @@ try {
         if (!$app) { Start-Sleep -Seconds 1 }
     }
     if (!$app) { throw 'The update did not reopen the native app window.' }
-    if ((Get-FileHash -LiteralPath $db).Hash -ne $databaseHash) { throw 'The update changed timetable data.' }
+    if ((Get-TimetableDataHash) -ne $updateDataHash) { throw 'The update changed timetable data.' }
     taskkill /PID $app.Id /T /F | Out-Null
     Get-Process -Name AcademyTimetable -ErrorAction SilentlyContinue |
         Where-Object { $_.Path -eq $executable } | Wait-Process -Timeout 30
