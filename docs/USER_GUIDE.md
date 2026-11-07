@@ -41,7 +41,9 @@ Windows 지원 기준은 **Windows 10 버전 1809(빌드 17763) 이상 64비트�
 
 설치 없이 사용하려면 [AcademyTimetable.exe](https://github.com/ljwoo8942/academy-timetable/releases/latest/download/AcademyTimetable.exe)를 내려받아 실행할 수도 있습니다. 이 파일에도 Python 실행 환경이 포함됩니다.
 
-실행 파일은 개발 확인용이며 Windows 배포 서명과 macOS 공증은 제공하지 않습니다. **인식할 수 없는 앱**, **게시자를 확인할 수 없음** 등 Windows 경고는 앱의 서명·평판 확인에 관한 것으로 GPT 로그인이나 Python 설치를 요구하는 화면과 구분해야 합니다. 보안 경고가 표시되면 파일의 다운로드 출처를 확인하세요. [Microsoft의 SmartScreen 안내](https://learn.microsoft.com/en-us/windows/security/operating-system-security/virus-and-threat-protection/microsoft-defender-smartscreen/)에서 경고의 의미를 확인할 수 있습니다.
+실행 파일은 개발 확인용이며 Windows 배포 서명과 macOS 공증은 제공하지 않습니다. **인식할 수 없는 앱**, **게시자를 확인할 수 없음** 등 Windows 경고는 앱의 서명·평판 확인에 관한 것으로 GPT 로그인이나 Python 설치를 요구하는 화면과 구분해야 합니다. [Microsoft의 SmartScreen 안내](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/smartscreen-reputation)에서 경고의 의미를 확인할 수 있습니다.
+
+**Windows의 PC 보호** 화면이 나오면 먼저 공식 GitHub 배포에서 받은 파일인지 확인하세요. 출처를 확인하고 실행을 선택하려면 **추가 정보 → 실행**을 누릅니다. 실행 버튼이 없다면 PC의 보안 정책으로 제한됐을 수 있으므로 관리자에게 허용을 요청하세요.
 
 다운로드한 뒤에는 인터넷 연결 없이 사용할 수 있습니다. 학원 데이터는 실행 파일과 별도로 컴퓨터의 사용자별 앱 데이터 폴더에 저장됩니다.
 

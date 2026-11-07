@@ -25,8 +25,14 @@ try {
     )
     $shell = New-Object -ComObject WScript.Shell
     foreach ($shortcut in $shortcuts) {
-        if (!(Test-Path -LiteralPath $shortcut) -or $shell.CreateShortcut($shortcut).TargetPath -ne $executable) {
-            throw 'Expected a shortcut to the installed executable.'
+        if (!(Test-Path -LiteralPath $shortcut)) {
+            Get-ChildItem ([Environment]::GetFolderPath('Desktop')), ([Environment]::GetFolderPath('Programs')) -Filter '*.lnk' -Recurse |
+                Select-Object -ExpandProperty FullName | Write-Output
+            throw "Missing shortcut: $shortcut"
+        }
+        $target = $shell.CreateShortcut($shortcut).TargetPath
+        if ($target -ne $executable) {
+            throw "Shortcut target is $target; expected $executable"
         }
     }
     $previousPath = $env:Path
@@ -64,7 +70,7 @@ try {
         if (Test-Path -LiteralPath $shortcut) { throw 'Uninstallation left an app shortcut.' }
     }
     if ((Get-FileHash -LiteralPath $db).Hash -ne $databaseHash) { throw 'Uninstallation changed user data.' }
-    Write-Output 'Installed startup without network or system Python, shortcuts, reinstallation and data-preserving uninstall: OK'
+    Write-Output 'Installed startup with network blocked and system Python absent from PATH, shortcuts, reinstallation and data-preserving uninstall: OK'
 } finally {
     if ($app -and !$app.HasExited) { taskkill /PID $app.Id /T /F | Out-Null }
     Get-NetFirewallRule -DisplayName $rulePrefix -ErrorAction SilentlyContinue | Remove-NetFirewallRule
