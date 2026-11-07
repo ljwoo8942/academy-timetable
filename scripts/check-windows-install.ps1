@@ -49,6 +49,19 @@ try {
     if (!(Test-Path -LiteralPath $db)) { throw 'App did not initialize its database.' }
     Start-Sleep -Seconds 2
     if ($app.HasExited) { throw "App exited with code $($app.ExitCode)." }
+    $version = & $python -c 'from importlib.metadata import version; print(version("academy-timetable"))'
+    if ($LASTEXITCODE -ne 0) { throw 'Could not read the expected app version.' }
+    $window = $null
+    for ($attempt = 0; $attempt -lt 30 -and !$window; $attempt++) {
+        $window = Get-Process -Name AcademyTimetable -ErrorAction SilentlyContinue |
+            Where-Object { $_.Path -eq $executable -and $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -eq "학원 시간표 관리 v$version" }
+        if (!$window) { Start-Sleep -Seconds 1 }
+    }
+    if (!$window) { throw 'Installed app did not create its native Windows window with the expected version.' }
+    $log = Join-Path (Split-Path -Parent $db) 'academy-timetable.log'
+    if (!(Test-Path -LiteralPath $log) -or !(Select-String -LiteralPath $log -SimpleMatch "version=$version" -Quiet)) {
+        throw 'Installed app did not record its startup version in the log.'
+    }
     & $python -c 'import sqlite3, sys; from academy_timetable.db import SCHEMA_VERSION; db = sqlite3.connect(sys.argv[1]); assert db.execute("PRAGMA user_version").fetchone() == (SCHEMA_VERSION,); db.execute("INSERT INTO terms(name) VALUES (?)", ("Installer preservation check",)); db.commit(); db.close()' $db
     if ($LASTEXITCODE -ne 0) { throw 'Installed app database check failed.' }
     taskkill /PID $app.Id /T /F | Out-Null
@@ -64,7 +77,7 @@ try {
         if (Test-Path -LiteralPath $shortcut) { throw 'Uninstallation left an app shortcut.' }
     }
     if ((Get-FileHash -LiteralPath $db).Hash -ne $databaseHash) { throw 'Uninstallation changed user data.' }
-    Write-Output 'Installed startup with network blocked and system Python absent from PATH, shortcuts, reinstallation and data-preserving uninstall: OK'
+    Write-Output 'Native Windows window and version, startup with network blocked and system Python absent from PATH, shortcuts, reinstallation and data-preserving uninstall: OK'
 } finally {
     if ($app -and !$app.HasExited) { taskkill /PID $app.Id /T /F | Out-Null }
     Get-NetFirewallRule -DisplayName $rulePrefix -ErrorAction SilentlyContinue | Remove-NetFirewallRule

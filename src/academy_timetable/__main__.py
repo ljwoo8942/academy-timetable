@@ -1,3 +1,4 @@
+import logging
 import os
 import sys
 from pathlib import Path
@@ -9,6 +10,7 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QDialog, Q
                                QTableWidgetItem, QVBoxLayout, QWidget)
 from .backup_ui import BackupPage
 from .db import CAPACITY_COLUMNS, FACILITY_COLUMNS, MAX_CAPACITY, Database, facility_tags
+from .diagnostics import APP_VERSION, configure_logging, install_exception_hook
 from .excel_export import export_timetable
 from .help_ui import HelpDialog
 from .import_ui import ImportDialog, TimetableImportDialog
@@ -56,7 +58,7 @@ class MainWindow(QMainWindow):
         self.db = db
         self.period_dirty = False
         self.previous_term = None
-        self.setWindowTitle("학원 시간표 관리")
+        self.setWindowTitle(f"학원 시간표 관리 v{APP_VERSION}")
         self.resize(1180, 760)
         self.setMinimumSize(800, 560)
         self.setStyleSheet(STYLE)
@@ -508,16 +510,26 @@ def main():
     app.setOrganizationName("AcademyTimetable")
     app.setApplicationName("AcademyTimetable")
     data_dir = Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation))
+    log_path = None
     try:
+        log_path = configure_logging(data_dir)
         db = Database(data_dir / "academy-timetable.sqlite3")
     except Exception as exc:
-        QMessageBox.critical(None, "데이터베이스 오류", str(exc))
+        logging.getLogger(__name__).exception("앱을 시작하지 못했습니다.")
+        detail = f"\n오류 로그: {log_path}" if log_path else "\n로그 파일을 만들지 못했습니다."
+        QMessageBox.critical(None, "시작 오류", str(exc) + detail)
         return 1
-    window = MainWindow(db)
-    window.show()
-    result = app.exec()
-    db.conn.close()
-    return result
+    previous_hook = install_exception_hook(log_path)
+    try:
+        window = MainWindow(db)
+        window.show()
+        return app.exec()
+    except Exception:
+        sys.excepthook(*sys.exc_info())
+        return 1
+    finally:
+        sys.excepthook = previous_hook
+        db.conn.close()
 
 
 if __name__ == "__main__":

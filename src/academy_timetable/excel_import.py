@@ -5,6 +5,10 @@ from openpyxl.utils import get_column_letter
 from .schedule import Schedule
 
 FIELDS = {"cohorts": "반 이름", "teachers": "강사 이름", "subjects": "과목 이름", "rooms": "강의실 이름"}
+MAX_ROWS = 5000
+MAX_COLUMNS = 256
+MAX_CELLS = 50000
+RANGE_ERROR = "가져올 범위는 데이터 5,000행, 256열, 제목을 포함한 전체 50,000셀 이내여야 합니다. 불필요한 행·열과 서식을 줄인 뒤 다시 선택하세요."
 
 
 def sheet_names(path):
@@ -20,14 +24,27 @@ def read_sheet(path, sheet):
     try:
         if sheet not in workbook.sheetnames:
             raise ValueError("시트를 찾을 수 없습니다.")
-        rows = workbook[sheet].iter_rows(values_only=True)
+        worksheet = workbook[sheet]
+        height, width = worksheet.max_row or 0, worksheet.max_column or 0
+        if height > MAX_ROWS + 1 or width > MAX_COLUMNS or height * width > MAX_CELLS:
+            raise ValueError(RANGE_ERROR)
+        rows = worksheet.iter_rows(values_only=True)
         header = next(rows, ())
+        if len(header) > MAX_COLUMNS:
+            raise ValueError(RANGE_ERROR)
         if not header or not any(value is not None for value in header):
             raise ValueError("첫 행에 열 제목이 필요합니다.")
         labels = [f"{get_column_letter(i)}: {str(value).strip() if value is not None else '(제목 없음)'}"
                   for i, value in enumerate(header, 1)]
-        return labels, [(i, tuple(values)) for i, values in enumerate(rows, 2)
-                        if any(value is not None and str(value).strip() for value in values)]
+        source_rows = []
+        cells = len(header)
+        for number, values in enumerate(rows, 2):
+            cells += len(values)
+            if number > MAX_ROWS + 1 or len(values) > MAX_COLUMNS or cells > MAX_CELLS:
+                raise ValueError(RANGE_ERROR)
+            if any(value is not None and str(value).strip() for value in values):
+                source_rows.append((number, tuple(values)))
+        return labels, source_rows
     finally:
         workbook.close()
 

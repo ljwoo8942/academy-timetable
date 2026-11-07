@@ -135,6 +135,35 @@ class GuiTests(unittest.TestCase):
             page.edit_lesson()
         self.assertEqual(seen, [[second], [first]])
 
+    def test_stale_lesson_dialog_preserves_another_windows_change(self):
+        term = self.window.term.currentData()
+        self.db.add("cohorts", "A반", term)
+        self.db.add("subjects", "수학")
+        self.db.add("teachers", "강사")
+        cohort = self.db.list("cohorts", term)[0][0]
+        subject = self.db.list("subjects")[0][0]
+        teacher = self.db.list("teachers")[0][0]
+        schedule = Schedule(self.db)
+        schedule.save_quota(cohort, subject, 2, 2)
+        schedule.assign(cohort, subject, teacher, None, 0, 1)
+        lesson_id = schedule.lessons(cohort)[0][0]
+        self.window.refresh_all()
+        page = self.window.schedule_page
+        page.grid.setCurrentCell(0, 0)
+
+        def concurrent_move(dialog):
+            schedule.assign(cohort, subject, teacher, None, 1, 3, lesson_id)
+            return QDialog.DialogCode.Accepted
+
+        with patch.object(QDialog, "exec", new=concurrent_move), \
+             patch.object(QMessageBox, "warning") as warning:
+            page.edit_lesson()
+        self.assertEqual(schedule.lessons(cohort)[0][1:4], (1, 3, 2))
+        warning.assert_called_once()
+        self.assertIn("변경", warning.call_args.args[2])
+        self.assertIsNone(page.grid.item(0, 0))
+        self.assertIsNotNone(page.grid.item(2, 1))
+
     def test_availability_page_updates_and_blocks_conflict(self):
         term = self.window.term.currentData()
         self.db.add("cohorts", "A반", term)

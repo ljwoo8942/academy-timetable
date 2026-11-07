@@ -258,6 +258,27 @@ class ScheduleTests(unittest.TestCase):
             self.assertEqual(len(Schedule(db).lessons(cohort)), 1)
             db.conn.close()
 
+    def test_stale_edit_is_rejected_between_database_connections(self):
+        with tempfile.TemporaryDirectory() as folder:
+            first = Database(Path(folder) / "shared.sqlite3")
+            self.db.conn.backup(first.conn)
+            second = Database(Path(folder) / "shared.sqlite3")
+            try:
+                editing = Schedule(first)
+                other = Schedule(second)
+                editing.assign(self.a, self.math, self.t1, None, 0, 1)
+                original = editing.lessons(self.a)[0]
+                other.assign(self.a, self.math, self.t2, self.r2, 1, 3, original[0])
+                changed = other.lessons(self.a)[0]
+                with self.assertRaisesRegex(ValueError, "변경"):
+                    editing.assign(self.a, self.math, self.t1, self.r1, 0, 1, original[0], expected=original)
+                self.assertEqual(editing.lessons(self.a), [changed])
+                editing.assign(self.a, self.math, self.t2, self.r1, 1, 3, changed[0], expected=changed)
+                self.assertEqual(other.lessons(self.a)[0][10], self.r1)
+            finally:
+                first.conn.close()
+                second.conn.close()
+
     def test_teacher_availability_and_atomic_changes(self):
         s = self.schedule
         self.assertEqual(s.availability(self.term, self.t1), [])

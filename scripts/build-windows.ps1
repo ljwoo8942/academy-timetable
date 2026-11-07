@@ -16,6 +16,7 @@ try {
 
     $options = @(
         '--windowed', '--onefile', '--name', 'AcademyTimetable',
+        '--copy-metadata', 'academy-timetable',
         '--paths', (Join-Path $project 'src'),
         '--specpath', $stage, '--workpath', (Join-Path $stage 'work'),
         '--distpath', $stage, $entry

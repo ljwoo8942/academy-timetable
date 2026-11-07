@@ -1,3 +1,4 @@
+import os
 import sqlite3
 import tempfile
 import threading
@@ -259,6 +260,45 @@ class BackupTests(unittest.TestCase):
         self.assertEqual(window.metrics["teachers"].text(), "1명")
         self.assertIn("복원 전 데이터 백업", info.call_args.args[2])
         window.close()
+
+    def test_applied_restore_cleanup_failure_refreshes_the_gui(self):
+        from academy_timetable.__main__ import MainWindow
+        from academy_timetable.backup_ui import BackupPage
+        app = QApplication.instance() or QApplication([])
+        backup_to(self.db, self.backup)
+        self.db.add("teachers", "복원 전 강사")
+        window = MainWindow(self.db)
+        page = window.findChild(BackupPage)
+        original_unlink = os.unlink
+
+        def locked_staging(path, *args, **kwargs):
+            if Path(path).name.startswith(".academy-restore-"):
+                raise PermissionError("임시 파일 잠김")
+            return original_unlink(path, *args, **kwargs)
+
+        try:
+            with patch.object(QFileDialog, "getOpenFileName", return_value=(str(self.backup), "")), \
+                 patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes), \
+                 patch.object(QMessageBox, "warning") as warning, \
+                 patch("academy_timetable.backup.os.unlink", side_effect=locked_staging):
+                page.restore_backup()
+            self.assertEqual(len(self.db.list("teachers")), 1)
+            self.assertEqual(window.metrics["teachers"].text(), "1명")
+            self.assertEqual(warning.call_args.args[1], "복원 후 정리 실패")
+            self.assertIn("복원 전 백업", warning.call_args.args[2])
+            self.assertEqual(len(list(Path(self.tmp.name).glob("before_restore_*.sqlite3"))), 1)
+            self.db.assert_current()
+        finally:
+            window.close()
+
+    def test_cleanup_failure_preserves_the_original_restore_error(self):
+        backup_to(self.db, self.backup)
+        with patch("academy_timetable.backup._check_backup", side_effect=ValueError("잘못된 백업")), \
+             patch("academy_timetable.backup.os.unlink", side_effect=PermissionError("임시 파일 잠김")), \
+             self.assertLogs("academy_timetable.backup", level="WARNING"):
+            with self.assertRaisesRegex(ValueError, "잘못된 백업"):
+                restore_from(self.db, self.backup)
+        self.assertEqual(len(self.schedule.lessons(self.cohort)), 1)
 
     def test_backup_validates_before_replacing_existing_file(self):
         self.backup.write_bytes(b"original backup")
