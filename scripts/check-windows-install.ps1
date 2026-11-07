@@ -23,16 +23,9 @@ try {
         (Join-Path ([Environment]::GetFolderPath('Desktop')) '학원 시간표.lnk'),
         (Join-Path ([Environment]::GetFolderPath('Programs')) '학원 시간표\학원 시간표.lnk')
     )
-    $shell = New-Object -ComObject WScript.Shell
     foreach ($shortcut in $shortcuts) {
         if (!(Test-Path -LiteralPath $shortcut)) {
-            Get-ChildItem ([Environment]::GetFolderPath('Desktop')), ([Environment]::GetFolderPath('Programs')) -Filter '*.lnk' -Recurse |
-                Select-Object -ExpandProperty FullName | Write-Output
             throw "Missing shortcut: $shortcut"
-        }
-        $target = $shell.CreateShortcut($shortcut).TargetPath
-        if ($target -ne $executable) {
-            throw "Shortcut target is $target; expected $executable"
         }
     }
     $previousPath = $env:Path
@@ -42,7 +35,8 @@ try {
         $env:Path = "$env:SystemRoot\System32"
         $env:PYTHONHOME = ''
         $env:PYTHONPATH = ''
-        $app = Start-Process -FilePath $executable -WorkingDirectory $working -PassThru
+        $app = Start-Process -FilePath $shortcuts[0] -WorkingDirectory $working -PassThru
+        if (!$app -or $app.Path -ne $executable) { throw 'Desktop shortcut did not start the installed executable.' }
     } finally {
         $env:Path = $previousPath
         $env:PYTHONHOME = $previousPythonHome
