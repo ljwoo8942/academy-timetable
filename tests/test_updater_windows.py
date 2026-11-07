@@ -49,6 +49,8 @@ class WindowsUpdateTests(unittest.TestCase):
                     if (portable / 'updated').exists() and log.exists() and 'Update installed and app restarted.' in log.read_text():
                         break
                     time.sleep(0.05)
+                detail = log.read_text(encoding='utf-8', errors='replace') if log.exists() else 'No helper log was created.'
+                self.assertTrue((portable / 'updated').is_file(), f'Helper exit={helpers[0].poll()}\n{detail}')
                 self.assertEqual((portable / 'updated').read_text(), 'new')
                 self.assertEqual(target.read_bytes(), expected)
                 helpers[0].wait(timeout=10)
