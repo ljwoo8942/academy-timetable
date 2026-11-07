@@ -18,8 +18,9 @@ def review_draft(db, term_id):
             except ValueError as exc:
                 issues.append(("오류", "교시표", str(exc)))
         cohorts = db.list("cohorts", term_id)
-        if not 3 <= len(cohorts) <= 10:
-            issues.append(("확인 필요", "반 수", f"현재 {len(cohorts)}개 반입니다. 최종 운영 기준은 3~10개 반입니다."))
+        common = sum(db.cohort_scope(row_id)[0] == "COMMON" for row_id, _ in cohorts)
+        if (common or not cohorts) and not 3 <= common <= 10:
+            issues.append(("확인 필요", "반 수", f"현재 공통 반 {common}개입니다. 공통 반 운영 기준은 3~10개 반입니다."))
         schedule = Schedule(db)
         cohort_sizes = db.capacity_values("cohorts")
         room_capacities = db.capacity_values("rooms")
@@ -32,7 +33,10 @@ def review_draft(db, term_id):
             quotas = schedule.quotas(cohort_id)
             if not quotas:
                 issues.append(("확인 필요", "시수 미설정", f"{cohort}: 과목별 주간 시수를 설정하세요."))
-            for _, subject, weekly, _, assigned, active in quotas:
+            allowed = db.allowed_subject_ids(cohort_id)
+            for subject_id, subject, weekly, _, assigned, active in quotas:
+                if allowed is not None and subject_id not in allowed:
+                    issues.append(("오류", "반 기준 불일치", f"{cohort} · {subject}: 반 기준에 맞지 않는 과목입니다."))
                 if assigned != weekly:
                     severity = "오류" if assigned > weekly else "확인 필요"
                     issues.append((severity, "시수 초과" if assigned > weekly else "미배정 시수",

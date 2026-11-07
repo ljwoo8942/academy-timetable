@@ -1,4 +1,6 @@
 import logging
+import json
+from pathlib import Path
 from logging.handlers import RotatingFileHandler
 from importlib.metadata import PackageNotFoundError, version
 import platform
@@ -12,6 +14,11 @@ try:
     APP_VERSION = version("academy-timetable")
 except PackageNotFoundError:
     APP_VERSION = "개발 버전"
+
+try:
+    APP_BUILD = json.loads(Path(__file__).with_name('build-info.json').read_text(encoding='utf-8-sig'))['commit']
+except (OSError, ValueError, KeyError):
+    APP_BUILD = ''
 
 
 def configure_logging(data_dir):
@@ -28,6 +35,8 @@ def configure_logging(data_dir):
     logger.propagate = False
     logger.info("앱 시작 version=%s Python=%s Qt=%s OS=%s arch=%s", APP_VERSION,
                 platform.python_version(), qVersion(), platform.platform(), platform.machine())
+    if APP_BUILD:
+        logger.info('배포 빌드 %s', APP_BUILD)
     return path
 
 

@@ -11,6 +11,11 @@ if ($LASTEXITCODE -ne 0 -or !$db -or (Test-Path -LiteralPath $db) -or (Test-Path
 $rulePrefix = 'AcademyTimetable-CI-' + [Guid]::NewGuid().ToString('N')
 $working = Join-Path $env:RUNNER_TEMP $rulePrefix
 $app = $null
+function Get-TimetableDataHash {
+    $value = & $python -c 'import hashlib,sqlite3,sys; from pathlib import Path; db=sqlite3.connect(Path(sys.argv[1]).resolve().as_uri()+"?mode=ro",uri=True); db.execute("BEGIN"); print(hashlib.sha256("\n".join(db.iterdump()).encode("utf-8")).hexdigest()); db.close()' $db
+    if ($LASTEXITCODE -ne 0) { throw 'Could not read the timetable data snapshot.' }
+    return $value
+}
 New-Item -ItemType Directory -Path $working | Out-Null
 try {
     foreach ($file in @($setup, $executable)) {
@@ -64,7 +69,36 @@ try {
     }
     & $python -c 'import sqlite3, sys; from academy_timetable.db import SCHEMA_VERSION; db = sqlite3.connect(sys.argv[1]); assert db.execute("PRAGMA user_version").fetchone() == (SCHEMA_VERSION,); db.execute("INSERT INTO terms(name) VALUES (?)", ("Installer preservation check",)); db.commit(); db.close()' $db
     if ($LASTEXITCODE -ne 0) { throw 'Installed app database check failed.' }
+    $updateDataHash = Get-TimetableDataHash
+    $updateStage = Join-Path $working 'update'
+    New-Item -ItemType Directory -Path $updateStage | Out-Null
+    $settings = @{ mode = 'windows-installer'; payload = $setup; target = $executable;
+        pid = $window.Id; parent_pid = $app.Id; executable = $executable; stage = $updateStage }
+    $settingsPath = Join-Path $working 'update-test.json'
+    $settings | ConvertTo-Json | Set-Content -LiteralPath $settingsPath -Encoding UTF8
+    & $python -c 'import json,sys; from academy_timetable.updater import launch_update; launch_update(json.load(open(sys.argv[1], encoding="utf-8-sig")))' $settingsPath
+    if ($LASTEXITCODE -ne 0) { throw 'Could not start the update helper.' }
+    $window.CloseMainWindow() | Out-Null
+    $updateLog = $updateStage + '.log'
+    for ($attempt = 0; $attempt -lt 120; $attempt++) {
+        if ((Test-Path -LiteralPath $updateLog) -and (Select-String -LiteralPath $updateLog -SimpleMatch 'Update installed and app restarted.' -Quiet)) { break }
+        Start-Sleep -Seconds 1
+    }
+    if (!(Test-Path -LiteralPath $updateLog) -or !(Select-String -LiteralPath $updateLog -SimpleMatch 'Update installed and app restarted.' -Quiet)) {
+        if (Test-Path -LiteralPath $updateLog) { Get-Content -LiteralPath $updateLog }
+        throw 'The update helper did not finish.'
+    }
+    $app = $null
+    for ($attempt = 0; $attempt -lt 30 -and !$app; $attempt++) {
+        $app = Get-Process -Name AcademyTimetable -ErrorAction SilentlyContinue |
+            Where-Object { $_.Path -eq $executable -and $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -eq "학원 시간표 관리 v$version" }
+        if (!$app) { Start-Sleep -Seconds 1 }
+    }
+    if (!$app) { throw 'The update did not reopen the native app window.' }
+    if ((Get-TimetableDataHash) -ne $updateDataHash) { throw 'The update changed timetable data.' }
     taskkill /PID $app.Id /T /F | Out-Null
+    Get-Process -Name AcademyTimetable -ErrorAction SilentlyContinue |
+        Where-Object { $_.Path -eq $executable } | Wait-Process -Timeout 30
     $app = $null
     $databaseHash = (Get-FileHash -LiteralPath $db).Hash
     $install = Start-Process -FilePath $setup -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART' -Wait -PassThru
@@ -77,7 +111,7 @@ try {
         if (Test-Path -LiteralPath $shortcut) { throw 'Uninstallation left an app shortcut.' }
     }
     if ((Get-FileHash -LiteralPath $db).Hash -ne $databaseHash) { throw 'Uninstallation changed user data.' }
-    Write-Output 'Native Windows window and version, startup with network blocked and system Python absent from PATH, shortcuts, reinstallation and data-preserving uninstall: OK'
+    Write-Output 'Native Windows window and version, offline startup without system Python on PATH, update helper and restart, shortcuts, reinstallation and data-preserving uninstall: OK'
 } finally {
     if ($app -and !$app.HasExited) { taskkill /PID $app.Id /T /F | Out-Null }
     Get-NetFirewallRule -DisplayName $rulePrefix -ErrorAction SilentlyContinue | Remove-NetFirewallRule

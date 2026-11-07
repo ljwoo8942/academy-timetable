@@ -9,6 +9,7 @@ from openpyxl.utils import get_column_letter
 
 from .db import DAYS
 from .schedule import Schedule
+from .timetable_import import COLUMNS, SCOPE_LABELS
 
 
 def snapshot(db, term_id):
@@ -35,7 +36,9 @@ def snapshot(db, term_id):
             JOIN subjects s ON s.id=l.subject_id JOIN teachers t ON t.id=l.teacher_id
             LEFT JOIN rooms r ON r.id=l.room_id WHERE c.term_id=?
             ORDER BY l.weekday,l.start_period,c.name,l.id""", (term_id,)).fetchall()
-        return term[0], periods, cohorts, teachers, rooms, subjects, quotas, lessons
+        scopes = {row_id: db.cohort_scope(row_id) for row_id, _ in cohorts}
+        areas = {row_id: db.subject_area(row_id) for row_id, _, _ in subjects}
+        return term[0], periods, cohorts, teachers, rooms, subjects, quotas, lessons, scopes, areas
     finally:
         db.conn.rollback()
 
@@ -44,7 +47,7 @@ def export_timetable(db, term_id, destination):
     path = Path(destination)
     if path.suffix.lower() != ".xlsx":
         raise ValueError("저장할 파일의 확장자는 .xlsx여야 합니다.")
-    term, periods, cohorts, teachers, rooms, subjects, quotas, lessons = snapshot(db, term_id)
+    term, periods, cohorts, teachers, rooms, subjects, quotas, lessons, scopes, areas = snapshot(db, term_id)
     workbook = Workbook()
     workbook.remove(workbook.active)
     blue = PatternFill("solid", fgColor="DEEAFB")
@@ -101,10 +104,12 @@ def export_timetable(db, term_id, destination):
     sheet = workbook.create_sheet("전체_배정목록")
     sheet.append([f"{term} · 전체 배정 목록 · 시간표 초안"])
     sheet.append(["강의실 미배정 수업을 포함합니다."])
-    sheet.append(["반", "과목", "강사", "강의실", "요일", "시작 교시", "종료 교시", "시수", "잠금"])
-    for _, cohort, _, subject, _, teacher, _, room, day, start, length, locked in lessons:
-        sheet.append([cohort, subject, teacher, room or "미배정", DAYS[day], start, start + length - 1, length, "잠금" if locked else "해제"])
-    for index in range(1, 10):
+    sheet.append(COLUMNS)
+    for cid, cohort, sid, subject, _, teacher, _, room, day, start, length, locked in lessons:
+        kind, target = scopes[cid]
+        sheet.append([cohort, subject, teacher, room or "미배정", DAYS[day], start, start + length - 1, length,
+                      "잠금" if locked else "해제", SCOPE_LABELS[kind], target, areas[sid]])
+    for index in range(1, len(COLUMNS) + 1):
         sheet.column_dimensions[get_column_letter(index)].width = 19
     style_sheet(sheet, 3)
 

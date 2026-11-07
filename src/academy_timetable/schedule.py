@@ -63,6 +63,7 @@ class Schedule:
             subject = self.conn.execute("SELECT active FROM subjects WHERE id=?", (subject_id,)).fetchone()
             if not subject or not subject[0]:
                 raise ValueError("활성 과목을 선택하세요.")
+            self.db.validate_cohort_subject(cohort_id, subject_id)
             assigned = self.conn.execute("SELECT COALESCE(SUM(length),0), MIN(length), MAX(length) FROM lessons WHERE cohort_id=? AND subject_id=?", (cohort_id, subject_id)).fetchone()
             if weekly < assigned[0] or (assigned[0] and (assigned[1] != length or assigned[2] != length)):
                 raise ValueError("이미 배정된 시수보다 줄이거나 기존 수업과 다른 길이로 변경할 수 없습니다.")
@@ -236,6 +237,7 @@ class Schedule:
             WHERE q.cohort_id=? AND q.subject_id=?""", (cohort_id, subject_id)).fetchone()
         if not quota or not quota[3]:
             raise ValueError("선택한 반에 활성 과목의 주간 시수를 먼저 설정하세요.")
+        self.db.validate_cohort_subject(cohort_id, subject_id)
         weekly, length, term_id, _, student_count, required_facilities = quota
         if not self.conn.execute("SELECT 1 FROM teachers WHERE id=?", (teacher_id,)).fetchone():
             raise ValueError("강사를 선택하세요.")

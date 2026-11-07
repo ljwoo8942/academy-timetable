@@ -139,11 +139,12 @@ class SchedulePage(QFrame):
             return
         dialog, form = self.dialog("주간 시수 설정")
         subjects = QComboBox()
+        allowed = self.db.allowed_subject_ids(self.cohort.currentData())
         for subject_id, name, active in self.db.list("subjects"):
-            if active:
+            if active and (allowed is None or subject_id in allowed):
                 subjects.addItem(name, subject_id)
         if not subjects.count():
-            QMessageBox.information(self, "과목 필요", "활성 과목을 먼저 등록하세요.")
+            QMessageBox.information(self, "과목 필요", "반 기준에 맞는 활성 과목이 없습니다. 과목 관리의 교과 설정과 반 기준을 확인하세요.")
             return
         chosen = self.selected_quota()
         index = subjects.findData(chosen)

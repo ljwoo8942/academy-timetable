@@ -26,10 +26,13 @@ cleanup() {
 trap cleanup EXIT
 
 printf '%s\n' 'from academy_timetable.__main__ import main' 'raise SystemExit(main())' > "$stage/launch.py"
+"$python" -c 'import json,os; print(json.dumps({"commit": os.environ.get("GITHUB_SHA") or "local"}))' > "$stage/build-info.json"
 cd "$stage"
 PYINSTALLER_CONFIG_DIR="$stage/cache" "$python" -m PyInstaller \
     --windowed --onedir --name AcademyTimetable --paths "$root/src" \
     --copy-metadata academy-timetable \
+    --collect-data academy_timetable \
+    --add-data "$stage/build-info.json:academy_timetable" \
     --osx-bundle-identifier com.ljwoo8942.academy-timetable launch.py
 
 staged_app="$stage/dist/AcademyTimetable.app"

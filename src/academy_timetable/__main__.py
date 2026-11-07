@@ -6,7 +6,7 @@ from pathlib import Path
 from PySide6.QtCore import QStandardPaths, Qt
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QDialog, QDialogButtonBox, QFrame, QHBoxLayout,
                                QFileDialog, QInputDialog, QLabel, QListWidget, QListWidgetItem, QMainWindow, QMenu,
-                               QMessageBox, QPushButton, QScrollArea, QStackedWidget, QTableWidget,
+                               QMessageBox, QPushButton, QScrollArea, QStackedWidget, QTableWidget, QLineEdit, QFormLayout,
                                QTableWidgetItem, QVBoxLayout, QWidget)
 from .backup_ui import BackupPage
 from .db import CAPACITY_COLUMNS, FACILITY_COLUMNS, MAX_CAPACITY, Database, facility_tags
@@ -16,6 +16,7 @@ from .help_ui import HelpDialog
 from .import_ui import ImportDialog, TimetableImportDialog
 from .review_ui import ReviewPage
 from .schedule_ui import RoomAssignmentPage, SchedulePage, TeacherAvailabilityPage, TeacherLoadPage
+from .update_ui import UpdateDialog
 
 
 STYLE = """
@@ -86,7 +87,7 @@ class MainWindow(QMainWindow):
         self.pages = QStackedWidget()
         self.page_info = [
             ("terms", "학기 관리", "학기별 운영 정보를 등록하고 관리합니다."),
-            ("cohorts", "반 관리", "선택한 학기의 반을 등록하고 관리합니다."),
+            ("cohorts", "과목별 반 설정", "교과 단위 또는 등록 과목 단위를 선택하여 국어 A, 수학 A 등의 반을 관리합니다."),
             ("teachers", "강사 관리", "등록된 강사를 확인하고 관리합니다."),
             ("subjects", "과목 관리", "과목을 등록하고 활성 상태를 관리합니다."),
             ("rooms", "강의실 관리", "수업에 사용할 강의실을 관리합니다."),
@@ -168,6 +169,10 @@ class MainWindow(QMainWindow):
         heading_text.addWidget(self.description)
         heading.addLayout(heading_text, 1)
         self.help_dialog = HelpDialog(self)
+        update_button = QPushButton("업데이트")
+        update_button.setAccessibleName("프로그램 업데이트")
+        update_button.clicked.connect(self.show_update)
+        heading.addWidget(update_button, alignment=Qt.AlignmentFlag.AlignTop)
         help_button = QPushButton("사용 방법")
         help_button.clicked.connect(self.show_help)
         heading.addWidget(help_button, alignment=Qt.AlignmentFlag.AlignTop)
@@ -191,6 +196,19 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("수동 시간표 편집 · 강의실 자동 제안 · 초안 검토")
         self.refresh_all()
         self.show_page(2)
+
+    def show_update(self):
+        if self.period_dirty:
+            QMessageBox.information(self, "교시표 저장", "교시표 변경을 먼저 저장한 뒤 업데이트하세요.")
+            return
+        dialog = UpdateDialog(self, self.db)
+        self.update_dialog = dialog
+        try:
+            dialog.exec()
+        finally:
+            self.update_dialog = None
+        if dialog.install_started and self.close():
+            QApplication.instance().quit()
 
     def show_help(self):
         self.help_dialog.show()
@@ -245,6 +263,8 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(QLabel(title + " 목록", objectName="cardTitle"))
         toolbar.addStretch()
         actions = [("+ 추가", "add"), ("이름 수정", "rename")]
+        if table == "cohorts":
+            actions.append(("반 기준 설정", "scope"))
         if table in CAPACITY_COLUMNS:
             actions.append(("인원 설정" if table == "cohorts" else "정원 설정", "capacity"))
         if table in FACILITY_COLUMNS:
@@ -260,6 +280,9 @@ class MainWindow(QMainWindow):
         options = QHBoxLayout()
         options.addWidget(QLabel("항목을 선택하여 수정하거나 관리할 수 있습니다.", objectName="muted"), 1)
         if table == "subjects":
+            area_button = QPushButton("교과 설정")
+            area_button.clicked.connect(lambda: self.edit("subjects", "area"))
+            options.addWidget(area_button)
             button = QPushButton("담당 강사 설정")
             button.clicked.connect(lambda: self.edit("subjects", "eligible_teachers"))
             options.addWidget(button)
@@ -344,6 +367,11 @@ class MainWindow(QMainWindow):
         facilities = self.db.facility_values(table) if table in FACILITY_COLUMNS else {}
         for row in self.db.list(table, self.term.currentData()):
             text = row[1] + (" (비활성)" if table == "subjects" and not row[2] else "")
+            if table == "cohorts":
+                kind, target = self.db.cohort_scope(row[0])
+                text += " · " + ({"AREA": "교과 단위", "SUBJECT": "등록 과목 단위", "COMMON": "공통 반"}[kind])
+                if target:
+                    text += f" ({target})"
             if table in CAPACITY_COLUMNS:
                 field = "인원" if table == "cohorts" else "정원"
                 value = capacities.get(row[0])
@@ -354,6 +382,7 @@ class MainWindow(QMainWindow):
                 display = ", ".join(facility_tags(facilities.get(row[0], ""))) or "등록 없음"
                 text += f" · {field} {display}"
             if table == "subjects":
+                text += f" · 교과 {self.db.subject_area(row[0]) or '미설정'}"
                 count = len(self.db.eligible_teachers(row[0]))
                 display = f"{count}명" if count else "미설정"
                 text += f" · 담당 강사 {display}"
@@ -386,6 +415,11 @@ class MainWindow(QMainWindow):
         self.refresh_term()
 
     def closeEvent(self, event):
+        update = getattr(self, "update_dialog", None)
+        if update is not None and update.worker is not None:
+            update.reject()
+            event.ignore()
+            return
         if self.discard_period_changes():
             event.accept()
         else:
@@ -443,6 +477,60 @@ class MainWindow(QMainWindow):
         self.db.set_eligible_teachers(subject_id, selected, expected=current)
         return True
 
+    def edit_cohort(self, cohort_id=None):
+        term_id = self.term.currentData()
+        if term_id is None:
+            raise ValueError("학기를 먼저 등록하고 선택하세요.")
+        name = next((name for row_id, name in self.db.list("cohorts", term_id) if row_id == cohort_id), "")
+        kind, target = self.db.cohort_scope(cohort_id)
+        expected = (name, kind, target) if cohort_id is not None else None
+        dialog = QDialog(self)
+        dialog.setWindowTitle("과목별 반 설정")
+        layout = QVBoxLayout(dialog)
+        hint = QLabel("반 이름은 학기 안에서 중복할 수 없습니다. 교과 단위는 해당 교과의 과목을, 등록 과목 단위는 선택한 한 과목만 배정합니다.")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        form = QFormLayout()
+        name_input = QLineEdit(name)
+        name_input.setAccessibleName("반 이름")
+        name_input.setPlaceholderText("국어 A, 수학 A, 문학 A")
+        scope = QComboBox()
+        scope.setAccessibleName("반 구분")
+        for label, value in (("교과 단위", "AREA"), ("등록 과목 단위", "SUBJECT"), ("공통 반", "COMMON")):
+            scope.addItem(label, value)
+        scope.setCurrentIndex(scope.findData(kind if cohort_id is not None else "AREA"))
+        basis = QComboBox()
+        basis.setAccessibleName("반 기준")
+
+        def update_basis():
+            basis.clear()
+            selected = scope.currentData()
+            basis.setEditable(selected == "AREA")
+            basis.setEnabled(selected != "COMMON")
+            table = "subject_areas" if selected == "AREA" else "subjects"
+            if selected != "COMMON":
+                basis.addItems([row[1] for row in self.db.list(table)])
+            if selected == kind and target:
+                basis.setCurrentText(target)
+
+        scope.currentIndexChanged.connect(update_basis)
+        update_basis()
+        form.addRow("반 이름", name_input)
+        form.addRow("반 구분", scope)
+        form.addRow("교과 / 등록 과목", basis)
+        layout.addLayout(form)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Save).setText("저장")
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("취소")
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return False
+        self.db.save_cohort(term_id, name_input.text(), scope.currentData(), basis.currentText(),
+                            cohort_id=cohort_id, expected=expected)
+        return True
+
     def edit(self, table, action):
         if not self.discard_period_changes():
             return
@@ -452,7 +540,19 @@ class MainWindow(QMainWindow):
             return
         row_id = item.data(Qt.ItemDataRole.UserRole) if item else None
         try:
-            if action in ("add", "rename"):
+            if table == "cohorts" and action in ("add", "scope"):
+                if not self.edit_cohort(None if action == "add" else row_id):
+                    return
+            elif action == "area":
+                current = self.db.subject_area(row_id) or ""
+                names = [row[1] for row in self.db.list("subject_areas")]
+                choices = [""] + names
+                value, ok = QInputDialog.getItem(self, "교과 설정", "교과 이름 (예: 국어, 수학 / 빈칸은 미설정). 모든 학기에 적용됩니다.",
+                                                choices, choices.index(current), True)
+                if not ok:
+                    return
+                self.db.set_subject_area(row_id, value.strip() or None)
+            elif action in ("add", "rename"):
                 default = "" if action == "add" else next(row[1] for row in self.db.list(table, self.term.currentData()) if row[0] == row_id)
                 name, ok = QInputDialog.getText(self, "이름 입력", "이름:", text=default)
                 if not ok:
