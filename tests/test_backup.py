@@ -2,6 +2,7 @@ import sqlite3
 import tempfile
 import threading
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
@@ -284,7 +285,7 @@ class BackupTests(unittest.TestCase):
 
     def test_extra_table_and_locked_backup_are_rejected(self):
         backup_to(self.db, self.backup)
-        with sqlite3.connect(self.backup) as connection:
+        with closing(sqlite3.connect(self.backup)) as connection, connection:
             connection.execute("CREATE TABLE extra_data (value TEXT)")
         with self.assertRaisesRegex(ValueError, "테이블 구성"):
             restore_from(self.db, self.backup)
