@@ -29,6 +29,7 @@ printf '%s\n' 'from academy_timetable.__main__ import main' 'raise SystemExit(ma
 cd "$stage"
 PYINSTALLER_CONFIG_DIR="$stage/cache" "$python" -m PyInstaller \
     --windowed --onedir --name AcademyTimetable --paths "$root/src" \
+    --copy-metadata academy-timetable \
     --osx-bundle-identifier com.ljwoo8942.academy-timetable launch.py
 
 staged_app="$stage/dist/AcademyTimetable.app"

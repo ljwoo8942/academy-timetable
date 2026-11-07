@@ -219,8 +219,12 @@ class Schedule:
                     raise ValueError("강의실이 해당 교시에 이미 배정되어 있습니다.")
             self.conn.execute("UPDATE lessons SET room_id=? WHERE id=?", (room_id, lesson.id))
 
-    def assign(self, cohort_id, subject_id, teacher_id, room_id, weekday, start, lesson_id=None):
+    def assign(self, cohort_id, subject_id, teacher_id, room_id, weekday, start, lesson_id=None, *, expected=None):
         with self.transaction():
+            if expected is not None:
+                current = next((row for row in self.lessons(cohort_id) if row[0] == lesson_id), None)
+                if current != expected:
+                    raise ValueError("수업 정보가 변경되었습니다. 현재 시간표를 확인한 뒤 다시 수정하세요.")
             self._assign(cohort_id, subject_id, teacher_id, room_id, weekday, start, lesson_id)
 
     def _assign(self, cohort_id, subject_id, teacher_id, room_id, weekday, start, lesson_id=None):

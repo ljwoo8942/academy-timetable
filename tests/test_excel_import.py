@@ -72,6 +72,19 @@ class ExcelImportTests(unittest.TestCase):
         rows = preview(self.db, self.term, labels, [(2, ("=A1", "x")), (3, (None, "내용"))], {"subjects": 0})
         self.assertTrue(all(row[3] for row in rows))
 
+    def test_oversized_sheet_is_rejected_before_loading_rows(self):
+        for row, column in ((5002, 1), (2, 257), (1001, 51)):
+            with self.subTest(row=row, column=column):
+                workbook = Workbook()
+                sheet = workbook.active
+                sheet.append(["반명"])
+                sheet.cell(row, column, "범위 끝")
+                workbook.save(self.path)
+                workbook.close()
+                with self.assertRaisesRegex(ValueError, "범위"):
+                    read_sheet(self.path, sheet.title)
+                self.assertEqual(self.db.list("cohorts", self.term), [])
+
     def test_gui_mapping_preview_and_import(self):
         window = MainWindow(self.db)
         dialog = ImportDialog(window, self.db, self.term)

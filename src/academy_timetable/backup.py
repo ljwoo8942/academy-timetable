@@ -1,4 +1,5 @@
 """SQLite 온라인 백업과 트랜잭션 기반 복원."""
+import logging
 import os
 import sqlite3
 import tempfile
@@ -167,5 +168,10 @@ def restore_from(db, source_path):
             safety.unlink()
         raise
     finally:
-        if staging and os.path.exists(staging):
-            os.unlink(staging)
+        if staging:
+            try:
+                Path(staging).unlink(missing_ok=True)
+            except OSError as exc:
+                if applied:
+                    raise RestoreAppliedError(f"복원은 적용되었지만 임시 파일 정리에 실패했습니다. 프로그램을 다시 시작하세요. 복원 전 백업: {safety}\n{exc}") from exc
+                logging.getLogger(__name__).warning("복원 임시 파일을 정리하지 못했습니다: %s", staging, exc_info=True)

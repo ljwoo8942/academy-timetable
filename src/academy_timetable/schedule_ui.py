@@ -249,10 +249,10 @@ class SchedulePage(QFrame):
         form.addRow("시작 교시", start)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             try:
-                self.schedule.assign(self.cohort.currentData(), subjects.currentData(), teachers.currentData(), rooms.currentData(), days.currentIndex(), start.value(), lesson[0] if lesson else None)
-                self.refresh()
+                self.schedule.assign(self.cohort.currentData(), subjects.currentData(), teachers.currentData(), rooms.currentData(), days.currentIndex(), start.value(), lesson[0] if lesson else None, expected=lesson)
             except Exception as exc:
                 QMessageBox.warning(self, "수업 저장 실패", str(exc))
+            self.refresh()
 
     def toggle_lock(self):
         lesson = self.selected_lesson()
