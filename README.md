@@ -12,10 +12,16 @@
 
 | 운영체제 | 다운로드 | 실행 |
 | --- | --- | --- |
-| Windows x64 | [AcademyTimetable.exe 다운로드](https://github.com/ljwoo8942/academy-timetable/releases/latest/download/AcademyTimetable.exe) | 다운로드한 파일을 더블클릭합니다. |
+| Windows 10 1809 이상 x64 · Windows 11 | [AcademyTimetable-Setup.exe 설치 파일 다운로드](https://github.com/ljwoo8942/academy-timetable/releases/latest/download/AcademyTimetable-Setup.exe) | 파일을 더블클릭하고 **설치 → 완료**를 누릅니다. 완료 화면의 앱 실행을 체크하면 바로 열립니다. |
 | Apple Silicon Mac | [AcademyTimetable-macOS-arm64.zip 다운로드](https://github.com/ljwoo8942/academy-timetable/releases/latest/download/AcademyTimetable-macOS-arm64.zip) | 압축을 푼 뒤 `학원 시간표.app`을 더블클릭합니다. |
 
-앱 실행에는 Python 설치가 필요 없습니다. 다운로드 파일은 개발 확인용이며 Windows 배포 서명과 macOS 공증은 제공하지 않습니다. 새 버전으로 바꿀 때는 실행 중인 앱을 닫고 새 파일을 열면 됩니다. 학원 데이터는 사용자별 앱 데이터 폴더에 저장되므로 새 실행 파일에서도 이어서 사용할 수 있습니다.
+**Python이 없는 PC에서도 실행됩니다.** 설치 파일 안에 Python 실행 환경과 필요한 라이브러리가 포함되어 있어 따로 Python을 설치하거나 GPT·GitHub에 로그인할 필요가 없습니다. Windows는 현재 사용자 폴더에 설치하고 바탕화면과 시작 메뉴에 **학원 시간표** 바로가기를 만듭니다. 설치 후 인터넷 연결도 필요 없습니다.
+
+Windows 지원 기준은 [Qt의 지원 조건](https://doc.qt.io/qt-6/supported-platforms.html)에 맞춘 **Windows 10 버전 1809(빌드 17763) 이상 64비트와 Windows 11 x64**입니다. `Win + R → winver`에서 Windows 버전을 확인할 수 있습니다. Windows 10 초기 버전과 32비트 Windows는 지원하지 않습니다.
+
+설치 없이 실행하려면 [AcademyTimetable.exe](https://github.com/ljwoo8942/academy-timetable/releases/latest/download/AcademyTimetable.exe)를 받을 수 있습니다. 새 버전으로 바꿀 때는 앱을 닫고 새 설치 파일을 실행합니다. 학원 데이터는 별도 사용자 앱 데이터 폴더에 저장되며 재설치나 앱 제거 시에도 유지합니다. 중요한 데이터는 먼저 **백업·복원**에서 백업하세요.
+
+다운로드 파일은 개발 확인용이며 Windows 배포 서명과 macOS 공증은 제공하지 않습니다. Windows의 **인식할 수 없는 앱** 또는 **게시자를 확인할 수 없음**은 앱 확인에 관한 보안 경고이며 GPT 로그인이나 Python 설치로 해결되는 문제가 아닙니다. 경고가 표시되면 다운로드 출처와 [설명서의 실행 문제 안내](docs/USER_GUIDE.md#13-자주-막히는-문제)를 확인하세요.
 
 다운로드한 뒤에는 인터넷 연결이나 GitHub 로그인 없이 사용할 수 있습니다. `main`의 Windows·Mac 테스트와 빌드가 모두 통과하면 실행 파일이 공개 Releases에 자동 갱신됩니다.
 
@@ -66,14 +72,14 @@ Finder에서 `dist/학원 시간표.app`을 더블클릭하면 터미널이나 �
 
 ## Windows 실행 파일 빌드
 
-Windows x64의 PowerShell에서 개발 환경을 준비한 뒤 프로젝트 폴더에서 실행하세요.
+Windows x64의 PowerShell에서 개발 환경과 [Inno Setup 6.5 이상](https://jrsoftware.org/isinfo.php)을 준비한 뒤 프로젝트 폴더에서 실행하세요. Inno Setup은 기본 경로인 `C:\Program Files (x86)\Inno Setup 6`에 설치합니다. 아래 도구는 실행 파일을 만드는 개발자에게만 필요합니다.
 
 ```powershell
 .venv\Scripts\python.exe -m pip install PyInstaller==6.22.3
 .\scripts\build-windows.ps1
 ```
 
-완성된 파일은 `dist\AcademyTimetable.exe`에 저장됩니다.
+완성된 설치 파일은 `dist\AcademyTimetable-Setup.exe`, 설치 없이 실행하는 파일은 `dist\AcademyTimetable.exe`에 저장됩니다. 둘 다 Python 실행 환경을 포함합니다.
 
 ## 개발 환경 실행
 

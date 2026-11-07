@@ -23,14 +23,27 @@
 
 ## 1. 다운로드와 실행
 
-GitHub 계정이나 로그인, 별도의 Python 설치 없이 사용할 수 있습니다.
+GPT·GitHub 계정이나 로그인 없이 사용할 수 있습니다. **Python이 설치되지 않은 컴퓨터에서도 실행할 수 있도록 Python 실행 환경과 필요한 라이브러리가 파일에 포함되어 있습니다.**
 
 | 운영체제 | 다운로드 | 실행 순서 |
 | --- | --- | --- |
-| Windows x64 | [AcademyTimetable.exe](https://github.com/ljwoo8942/academy-timetable/releases/latest/download/AcademyTimetable.exe) | 파일을 내려받아 더블클릭합니다. |
+| Windows 10 1809 이상 x64 · Windows 11 | [AcademyTimetable-Setup.exe](https://github.com/ljwoo8942/academy-timetable/releases/latest/download/AcademyTimetable-Setup.exe) | 파일을 내려받아 더블클릭하고 **설치 → 완료**를 누릅니다. |
 | Apple Silicon Mac | [AcademyTimetable-macOS-arm64.zip](https://github.com/ljwoo8942/academy-timetable/releases/latest/download/AcademyTimetable-macOS-arm64.zip) | 압축을 푼 뒤 `학원 시간표.app`을 더블클릭합니다. |
 
-실행 파일은 개발 확인용이며 Windows 배포 서명과 macOS 공증은 제공하지 않습니다. 운영체제에서 보안 경고가 표시될 수 있으므로 다운로드 출처가 위 프로젝트의 공식 배포인지 확인하세요.
+### Windows 설치 순서
+
+1. 위의 **AcademyTimetable-Setup.exe** 링크에서 설치 파일을 내려받습니다. 파일 이름의 확장자가 `.exe`인지 확인합니다.
+2. 다운로드가 끝난 파일을 더블클릭하고 **설치**를 누릅니다. 현재 사용자 폴더에 설치되므로 관리자 계정의 비밀번호를 요구하지 않습니다.
+3. 완료 화면에서 **학원 시간표 실행**을 체크한 상태로 **완료**를 누르면 프로그램이 열립니다.
+4. 다음부터는 바탕화면이나 시작 메뉴의 **학원 시간표**를 더블클릭합니다. 설치 파일을 매번 실행할 필요는 없습니다.
+
+Windows 지원 기준은 **Windows 10 버전 1809(빌드 17763) 이상 64비트와 Windows 11 x64**입니다. 이는 사용하는 [Qt의 지원 조건](https://doc.qt.io/qt-6/supported-platforms.html)에 따른 것으로 Windows 10 초기 버전과 32비트 Windows는 지원하지 않습니다. `Win + R → winver`로 버전을 확인하고, Windows 설정의 시스템 정보에서 64비트 여부를 확인하세요.
+
+설치 없이 사용하려면 [AcademyTimetable.exe](https://github.com/ljwoo8942/academy-timetable/releases/latest/download/AcademyTimetable.exe)를 내려받아 실행할 수도 있습니다. 이 파일에도 Python 실행 환경이 포함됩니다.
+
+실행 파일은 개발 확인용이며 Windows 배포 서명과 macOS 공증은 제공하지 않습니다. **인식할 수 없는 앱**, **게시자를 확인할 수 없음** 등 Windows 경고는 앱의 서명·평판 확인에 관한 것으로 GPT 로그인이나 Python 설치를 요구하는 화면과 구분해야 합니다. [Microsoft의 SmartScreen 안내](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/smartscreen-reputation)에서 경고의 의미를 확인할 수 있습니다.
+
+**Windows의 PC 보호** 화면이 나오면 먼저 공식 GitHub 배포에서 받은 파일인지 확인하세요. 출처를 확인하고 실행을 선택하려면 **추가 정보 → 실행**을 누릅니다. 실행 버튼이 없다면 PC의 보안 정책으로 제한됐을 수 있으므로 관리자에게 허용을 요청하세요.
 
 다운로드한 뒤에는 인터넷 연결 없이 사용할 수 있습니다. 학원 데이터는 실행 파일과 별도로 컴퓨터의 사용자별 앱 데이터 폴더에 저장됩니다.
 
@@ -257,10 +270,12 @@ GitHub 계정이나 로그인, 별도의 Python 설치 없이 사용할 수 있�
 
 1. **백업·복원**에서 현재 데이터를 백업합니다.
 2. 실행 중인 앱을 닫습니다.
-3. [최신 실행 파일](https://github.com/ljwoo8942/academy-timetable/releases/latest)을 내려받아 실행합니다.
+3. Windows는 [최신 설치 파일](https://github.com/ljwoo8942/academy-timetable/releases/latest/download/AcademyTimetable-Setup.exe)을 내려받아 설치합니다. Mac은 [최신 배포 목록](https://github.com/ljwoo8942/academy-timetable/releases/latest)에서 앱을 받아 엽니다.
 4. 기존 학기와 시간표가 표시되는지 확인합니다.
 
 데이터는 실행 파일과 별도로 저장되므로 같은 사용자 계정에서는 이어서 사용할 수 있습니다. 새 프로그램이 데이터베이스를 갱신하면 이전 버전의 프로그램에서 열 수 없을 수 있으므로 업데이트 전 백업을 보관하세요.
+
+Windows 앱은 Windows 설정의 앱 목록에서 **학원 시간표**를 선택해 제거할 수 있습니다. 앱을 제거해도 저장된 시간표 데이터는 유지됩니다.
 
 ### 다른 컴퓨터로 데이터 옮기기
 
@@ -275,6 +290,10 @@ GitHub 계정이나 로그인, 별도의 Python 설치 없이 사용할 수 있�
 
 | 상황 | 확인 방법 |
 | --- | --- |
+| Python이 설치되어 있지 않음 | 공개 배포의 설치 파일과 실행 파일에는 Python이 포함되어 있습니다. 별도로 Python을 설치할 필요 없이 `.exe` 파일을 실행합니다. |
+| GPT·GitHub 로그인 화면이 나타남 | 이 프로그램은 로그인 기능이 없습니다. 내려받은 파일의 이름과 확장자를 확인하고 이 문서의 공식 설치 파일 링크에서 다시 받습니다. 링크 바로가기나 웹페이지 파일을 열고 있지 않은지도 확인합니다. |
+| 인식할 수 없는 앱 또는 게시자를 확인할 수 없음 | Windows의 앱 확인 경고일 수 있습니다. 공식 배포에서 받은 파일인지 확인하세요. 이 버전은 배포 서명이 없으므로 경고가 계속 표시될 수 있으며, PC의 보안 정책에 따라 실행 허용 여부가 달라집니다. |
+| 이 PC에서 실행할 수 없다고 표시됨 | Windows 버전과 64비트 여부를 확인합니다. 지원 기준은 Windows 10 1809 이상 x64 또는 Windows 11 x64입니다. |
 | 반이나 시간표가 보이지 않음 | 오른쪽 위 학기와 시간표 편집 화면의 반을 확인합니다. |
 | 수업 과목을 고를 수 없음 | 해당 반의 시수 설정, 잔여 교시, 과목의 활성 상태를 확인합니다. |
 | 원하는 강사가 후보에 없음 | 과목 관리의 담당 강사 설정을 확인합니다. |
