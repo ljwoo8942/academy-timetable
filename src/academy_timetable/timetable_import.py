@@ -11,7 +11,8 @@ from .excel_import import FIELDS
 from .schedule import Schedule
 
 
-COLUMNS = ("반", "과목", "강사", "강의실", "요일", "시작 교시", "종료 교시", "시수", "잠금")
+COLUMNS = ("반", "과목", "강사", "강의실", "요일", "시작 교시", "종료 교시", "시수", "잠금", "반 구분", "반 기준", "교과")
+SCOPE_LABELS = {"COMMON": "공통", "AREA": "교과", "SUBJECT": "과목"}
 REQUIRED = ("반", "과목", "강사", "요일", "시작 교시")
 HEADERS = {name.replace(" ", ""): name for name in COLUMNS}
 HEADERS.update({"반이름": "반", "반명": "반", "과목이름": "과목", "과목명": "과목",
@@ -27,6 +28,9 @@ class ImportedLesson(NamedTuple):
     start: int
     length: int
     locked: bool
+    scope_kind: str = "COMMON"
+    scope_name: Optional[str] = None
+    area_name: Optional[str] = None
 
 
 class SheetRow(NamedTuple):
@@ -52,7 +56,16 @@ def _number(value, label, maximum):
 
 
 def _parse(values):
-    cohort, subject, teacher, room, day, start, end, length, locked = values
+    cohort, subject, teacher, room, day, start, end, length, locked, kind, basis, area = (*values, *([None] * (len(COLUMNS) - len(values))))
+    kinds = {label: key for key, label in SCOPE_LABELS.items()}
+    if kind is None:
+        kind = "공통"
+    if kind not in kinds:
+        raise ValueError("반 구분은 공통, 교과, 과목 중 하나를 입력하세요.")
+    if kind == "공통" and basis is not None:
+        raise ValueError("공통 반에는 반 기준을 입력하지 마세요.")
+    basis = _name(basis, "반 기준") if kind != "공통" else None
+    area = _name(area, "교과") if area is not None else None
     day = str(day).strip()
     if day.endswith("요일"):
         day = day[:-2]
@@ -75,7 +88,7 @@ def _parse(values):
     else:
         room = _name(room, "강의실")
     return ImportedLesson(_name(cohort, "반"), _name(subject, "과목"), _name(teacher, "강사"), room,
-                          DAYS.index(day), start, length or 1, lock_text == "잠금")
+                          DAYS.index(day), start, length or 1, lock_text == "잠금", kinds[kind], basis, area)
 
 
 def _cohort_key(value):
@@ -177,14 +190,9 @@ def _import_rows(db, term_id, rows):
     if not term or not rows:
         raise ValueError("대상 학기와 불러올 수업을 확인하세요.")
     schedule = Schedule(db)
-    saved = {ImportedLesson(row.cohort, row.subject, row.teacher, row.room if row.room_id is not None else None,
+    saved = {(row.cohort, row.subject, row.teacher, row.room if row.room_id is not None else None,
                             row.weekday, row.start, row.length, bool(row.locked))
              for row in schedule.room_lessons(term_id)}
-    pending = defaultdict(set)
-    for row in rows:
-        if row.lesson is not None and row.lesson not in saved:
-            pending[row.lesson.cohort, row.lesson.subject].add(row.lesson)
-
     ids = {table: {row[1]: row[0] for row in db.list(table, term_id)} for table in FIELDS}
 
     def name_id(table, name):
@@ -196,16 +204,45 @@ def _import_rows(db, term_id, rows):
             ids[table][name] = inserted.lastrowid
         return ids[table][name]
 
+    metadata_errors = {}
+    pending = defaultdict(dict)
+    for index, row in enumerate(rows):
+        lesson = row.lesson
+        if lesson is None:
+            continue
+        try:
+            cohort_id = name_id("cohorts", lesson.cohort)
+            subject_id = name_id("subjects", lesson.subject)
+            if lesson.area_name is not None:
+                current = db.subject_area(subject_id)
+                if current is not None and current != lesson.area_name:
+                    raise ValueError("기존 과목의 교과 설정과 다릅니다. 과목 관리에서 먼저 확인하세요.")
+                db._set_subject_area(subject_id, lesson.area_name)
+            if lesson.scope_kind != "COMMON":
+                current = db.cohort_scope(cohort_id)
+                if current[0] != "COMMON" and current != (lesson.scope_kind, lesson.scope_name):
+                    raise ValueError("기존 반 기준과 다릅니다. 과목별 반 설정에서 먼저 확인하세요.")
+                db._set_cohort_scope(cohort_id, lesson.scope_kind, lesson.scope_name)
+            if lesson[:8] not in saved:
+                pending[lesson.cohort, lesson.subject][lesson[:8]] = lesson
+        except ValueError as exc:
+            metadata_errors[index] = str(exc)
+
     lengths, group_errors = {}, {}
     for group, lessons in pending.items():
         cohort_id, subject_id = name_id("cohorts", group[0]), name_id("subjects", group[1])
+        try:
+            db.validate_cohort_subject(cohort_id, subject_id)
+        except ValueError as exc:
+            group_errors[group] = str(exc)
+            continue
         quota = db.conn.execute("SELECT session_length FROM quotas WHERE cohort_id=? AND subject_id=?",
                                 (cohort_id, subject_id)).fetchone()
         if quota:
             lengths[group] = quota[0]
             continue
-        sizes = {lesson.length for lesson in lessons}
-        total = sum(lesson.length for lesson in lessons)
+        sizes = {lesson.length for lesson in lessons.values()}
+        total = sum(lesson.length for lesson in lessons.values())
         if len(sizes) != 1 or total > 55:
             group_errors[group] = "같은 반의 같은 과목은 수업 길이가 같아야 하며 주간 시수는 55교시 이하여야 합니다."
             continue
@@ -213,12 +250,15 @@ def _import_rows(db, term_id, rows):
         db.conn.execute("INSERT INTO quotas VALUES (?,?,?,?)", (cohort_id, subject_id, total, lengths[group]))
 
     results = []
-    for row in rows:
+    for index, row in enumerate(rows):
         lesson = row.lesson
         if lesson is None:
             results.append(("오류", row.error))
             continue
-        if lesson in saved:
+        if index in metadata_errors:
+            results.append(("오류", metadata_errors[index]))
+            continue
+        if lesson[:8] in saved:
             results.append(("건너뜀", "같은 수업이 이미 있습니다."))
             continue
         group = lesson.cohort, lesson.subject
@@ -237,7 +277,7 @@ def _import_rows(db, term_id, rows):
             results.append(("오류", str(exc)))
         else:
             results.append(("추가", ""))
-            saved.add(lesson)
+            saved.add(lesson[:8])
     return term[0], tuple(results)
 
 

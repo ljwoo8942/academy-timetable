@@ -4,9 +4,19 @@ def make_legacy_fixture(connection, version):
     connection.execute("PRAGMA foreign_keys = OFF")
     connection.execute("BEGIN")
     with connection:
+        if version < 8:
+            connection.execute("DROP TABLE cohort_scopes")
+            connection.execute("""CREATE TABLE legacy_subjects (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE,
+                active INTEGER NOT NULL DEFAULT 1, required_facilities TEXT NOT NULL DEFAULT '')""")
+            connection.execute("INSERT INTO legacy_subjects SELECT id,name,active,required_facilities FROM subjects")
+            connection.execute("DROP TABLE subjects")
+            connection.execute("ALTER TABLE legacy_subjects RENAME TO subjects")
+            connection.execute("DROP TABLE subject_areas")
         if version < 6:
             connection.execute("DROP TABLE teacher_subjects")
         for table in ("lessons", "teacher_availability"):
+            if version >= 7:
+                continue
             sql = connection.execute("SELECT sql FROM sqlite_master WHERE name=?", (table,)).fetchone()[0]
             old_table = f"old_{table}"
             sql = sql.replace(f"CREATE TABLE {table}", f"CREATE TABLE {old_table}", 1)

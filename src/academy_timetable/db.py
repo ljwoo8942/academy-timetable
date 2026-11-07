@@ -9,8 +9,8 @@ DEFAULT_PERIODS = (
     ("15:40", "16:30"), ("16:40", "17:30"), ("18:40", "19:30"),
     ("19:40", "20:30"), ("20:40", "21:30"),
 )
-TABLES = {"terms", "cohorts", "teachers", "subjects", "rooms"}
-SCHEMA_VERSION = 7
+TABLES = {"terms", "cohorts", "teachers", "subjects", "rooms", "subject_areas"}
+SCHEMA_VERSION = 8
 CAPACITY_COLUMNS = {"cohorts": "student_count", "rooms": "capacity"}
 FACILITY_COLUMNS = {"subjects": "required_facilities", "rooms": "facilities"}
 MAX_CAPACITY = 2147483647
@@ -123,7 +123,17 @@ class Database:
                             self.conn.execute(f"ALTER TABLE {replacement} RENAME TO {table}")
                     if version >= 3:
                         self.advance_generation()
-                    self.conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+                if version < 8:
+                    self.conn.execute("CREATE TABLE subject_areas (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE)")
+                    self.conn.execute("ALTER TABLE subjects ADD COLUMN area_id INTEGER REFERENCES subject_areas(id) ON DELETE RESTRICT")
+                    self.conn.execute("""CREATE TABLE cohort_scopes (
+                        cohort_id INTEGER PRIMARY KEY REFERENCES cohorts(id) ON DELETE CASCADE,
+                        area_id INTEGER REFERENCES subject_areas(id) ON DELETE RESTRICT,
+                        subject_id INTEGER REFERENCES subjects(id) ON DELETE RESTRICT,
+                        CHECK((area_id IS NOT NULL) != (subject_id IS NOT NULL)))""")
+                    if version >= 7:
+                        self.advance_generation()
+                self.conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         self.restore_generation = self.conn.execute("PRAGMA application_id").fetchone()[0]
 
     def advance_generation(self):
@@ -211,6 +221,88 @@ class Database:
         return {row[0] for row in self.conn.execute(
             "SELECT teacher_id FROM teacher_subjects WHERE subject_id=?", (subject_id,)
         )}
+
+    def _area_id(self, name):
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("교과 이름을 입력하세요.")
+        name = name.strip()
+        self.conn.execute("INSERT OR IGNORE INTO subject_areas(name) VALUES (?)", (name,))
+        return self.conn.execute("SELECT id FROM subject_areas WHERE name=?", (name,)).fetchone()[0]
+
+    def subject_area(self, subject_id):
+        row = self.conn.execute("""SELECT a.name FROM subjects s
+            LEFT JOIN subject_areas a ON a.id=s.area_id WHERE s.id=?""", (subject_id,)).fetchone()
+        return row[0] if row else None
+
+    def set_subject_area(self, subject_id, name):
+        with self.transaction():
+            self._set_subject_area(subject_id, name)
+
+    def _set_subject_area(self, subject_id, name):
+        if not self.conn.execute("SELECT 1 FROM subjects WHERE id=?", (subject_id,)).fetchone():
+            raise ValueError("과목을 찾을 수 없습니다.")
+        area_id = self._area_id(name) if name else None
+        if self.conn.execute("""SELECT 1 FROM quotas q JOIN cohort_scopes cs ON cs.cohort_id=q.cohort_id
+            WHERE q.subject_id=? AND cs.area_id IS NOT NULL AND cs.area_id IS NOT ? LIMIT 1""",
+                             (subject_id, area_id)).fetchone():
+            raise ValueError("이 과목을 사용하는 교과 반의 기존 시수를 먼저 조정하세요.")
+        self.conn.execute("UPDATE subjects SET area_id=? WHERE id=?", (area_id, subject_id))
+
+    def cohort_scope(self, cohort_id):
+        row = self.conn.execute("""SELECT cs.area_id, a.name, s.name FROM cohort_scopes cs
+            LEFT JOIN subject_areas a ON a.id=cs.area_id LEFT JOIN subjects s ON s.id=cs.subject_id
+            WHERE cs.cohort_id=?""", (cohort_id,)).fetchone()
+        return ("COMMON", None) if row is None else ("AREA", row[1]) if row[0] is not None else ("SUBJECT", row[2])
+
+    def allowed_subject_ids(self, cohort_id):
+        row = self.conn.execute("SELECT area_id,subject_id FROM cohort_scopes WHERE cohort_id=?", (cohort_id,)).fetchone()
+        if row is None:
+            return None
+        if row[1] is not None:
+            return {row[1]}
+        return {subject_id for subject_id, in self.conn.execute("SELECT id FROM subjects WHERE area_id=?", (row[0],))}
+
+    def validate_cohort_subject(self, cohort_id, subject_id):
+        allowed = self.allowed_subject_ids(cohort_id)
+        if allowed is not None and subject_id not in allowed:
+            raise ValueError("반 기준에 맞는 교과 또는 등록 과목만 배정할 수 있습니다.")
+
+    def _set_cohort_scope(self, cohort_id, kind, target):
+        area_id = subject_id = None
+        if kind == "AREA":
+            area_id = self._area_id(target)
+            allowed = {row[0] for row in self.conn.execute("SELECT id FROM subjects WHERE area_id=?", (area_id,))}
+        elif kind == "SUBJECT":
+            row = self.conn.execute("SELECT id FROM subjects WHERE name=?", (target,)).fetchone()
+            if row is None:
+                raise ValueError("반 기준으로 사용할 등록 과목을 선택하세요.")
+            subject_id = row[0]
+            allowed = {subject_id}
+        elif kind == "COMMON":
+            self.conn.execute("DELETE FROM cohort_scopes WHERE cohort_id=?", (cohort_id,))
+            return
+        else:
+            raise ValueError("반 구분을 선택하세요.")
+        if any(row[0] not in allowed for row in self.conn.execute("SELECT subject_id FROM quotas WHERE cohort_id=?", (cohort_id,))):
+            raise ValueError("기존 시수에 새 반 기준과 맞지 않는 과목이 있습니다. 시수를 먼저 조정하세요.")
+        self.conn.execute("""INSERT INTO cohort_scopes VALUES (?,?,?) ON CONFLICT(cohort_id)
+            DO UPDATE SET area_id=excluded.area_id,subject_id=excluded.subject_id""", (cohort_id, area_id, subject_id))
+
+    def save_cohort(self, term_id, name, kind, target, *, cohort_id=None, expected=None):
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("국어 A, 수학 A처럼 반 이름을 입력하세요.")
+        with self.transaction():
+            if cohort_id is None:
+                cohort_id = self.conn.execute("INSERT INTO cohorts(term_id,name) VALUES (?,?)", (term_id, name.strip())).lastrowid
+            else:
+                row = self.conn.execute("SELECT name FROM cohorts WHERE id=? AND term_id=?", (cohort_id, term_id)).fetchone()
+                if row is None:
+                    raise ValueError("반을 찾을 수 없습니다.")
+                if expected is not None and (row[0], *self.cohort_scope(cohort_id)) != expected:
+                    raise ValueError("반 설정이 변경되었습니다. 다시 열어 확인하세요.")
+                self.conn.execute("UPDATE cohorts SET name=? WHERE id=?", (name.strip(), cohort_id))
+            self._set_cohort_scope(cohort_id, kind, target)
+        return cohort_id
 
     def set_eligible_teachers(self, subject_id, teacher_ids, *, expected):
         selected = set(teacher_ids)

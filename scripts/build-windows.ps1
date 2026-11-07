@@ -13,10 +13,15 @@ try {
     $entry = Join-Path $stage 'launch.py'
     @('from academy_timetable.__main__ import main', 'raise SystemExit(main())') |
         Set-Content -LiteralPath $entry -Encoding Ascii
+    $buildInfo = Join-Path $stage 'build-info.json'
+    $buildId = if ($env:GITHUB_SHA) { $env:GITHUB_SHA } else { 'local' }
+    @{ commit = $buildId } | ConvertTo-Json -Compress | Set-Content -LiteralPath $buildInfo -Encoding UTF8
 
     $options = @(
         '--windowed', '--onefile', '--name', 'AcademyTimetable',
         '--copy-metadata', 'academy-timetable',
+        '--collect-data', 'academy_timetable',
+        '--add-data', ($buildInfo + ';academy_timetable'),
         '--paths', (Join-Path $project 'src'),
         '--specpath', $stage, '--workpath', (Join-Path $stage 'work'),
         '--distpath', $stage, $entry

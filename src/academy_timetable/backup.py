@@ -22,10 +22,16 @@ VERSION_5_TABLES = {
     "lessons": ("id", "cohort_id", "subject_id", "teacher_id", "room_id", "weekday", "start_period", "length", "locked"),
     "teacher_availability": ("term_id", "teacher_id", "weekday", "period", "status"),
 }
-TABLES = {**VERSION_5_TABLES, "teacher_subjects": ("subject_id", "teacher_id")}
+VERSION_7_TABLES = {**VERSION_5_TABLES, "teacher_subjects": ("subject_id", "teacher_id")}
+TABLES = {"terms": VERSION_7_TABLES["terms"], "teachers": VERSION_7_TABLES["teachers"],
+          "subject_areas": ("id", "name"),
+          **{name: columns for name, columns in VERSION_7_TABLES.items() if name not in ("terms", "teachers")},
+          "cohort_scopes": ("cohort_id", "area_id", "subject_id")}
+TABLES["subjects"] = (*VERSION_7_TABLES["subjects"], "area_id")
 VERSION_4_TABLES = {**VERSION_5_TABLES, "subjects": ("id", "name", "active"), "rooms": ("id", "name", "capacity")}
 VERSION_3_TABLES = {**VERSION_4_TABLES, "rooms": ("id", "name"), "cohorts": ("id", "term_id", "name")}
-BACKUP_SCHEMAS = {3: VERSION_3_TABLES, 4: VERSION_4_TABLES, 5: VERSION_5_TABLES, 6: TABLES, SCHEMA_VERSION: TABLES}
+BACKUP_SCHEMAS = {3: VERSION_3_TABLES, 4: VERSION_4_TABLES, 5: VERSION_5_TABLES,
+                  6: VERSION_7_TABLES, 7: VERSION_7_TABLES, SCHEMA_VERSION: TABLES}
 
 
 def database_path(db):
