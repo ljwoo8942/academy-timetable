@@ -4,14 +4,14 @@ from pathlib import Path
 
 from PySide6.QtCore import QStandardPaths, Qt
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QDialog, QDialogButtonBox, QFrame, QHBoxLayout,
-                               QFileDialog, QInputDialog, QLabel, QListWidget, QListWidgetItem, QMainWindow,
+                               QFileDialog, QInputDialog, QLabel, QListWidget, QListWidgetItem, QMainWindow, QMenu,
                                QMessageBox, QPushButton, QScrollArea, QStackedWidget, QTableWidget,
                                QTableWidgetItem, QVBoxLayout, QWidget)
 from .backup_ui import BackupPage
 from .db import CAPACITY_COLUMNS, FACILITY_COLUMNS, MAX_CAPACITY, Database, facility_tags
 from .excel_export import export_timetable
 from .help_ui import HelpDialog
-from .import_ui import ImportDialog
+from .import_ui import ImportDialog, TimetableImportDialog
 from .review_ui import ReviewPage
 from .schedule_ui import RoomAssignmentPage, SchedulePage, TeacherAvailabilityPage, TeacherLoadPage
 
@@ -88,7 +88,7 @@ class MainWindow(QMainWindow):
             ("teachers", "강사 관리", "등록된 강사를 확인하고 관리합니다."),
             ("subjects", "과목 관리", "과목을 등록하고 활성 상태를 관리합니다."),
             ("rooms", "강의실 관리", "수업에 사용할 강의실을 관리합니다."),
-            ("periods", "교시·시간 설정", "선택한 학기의 월~금 공통 교시 시간을 설정합니다."),
+            ("periods", "교시·시간 설정", "선택한 학기의 월~토 공통 교시 시간을 설정합니다."),
             ("schedule", "시간표 편집", "과목 시수를 설정하고 반별 수업을 수동으로 배정합니다."),
             ("teacher_load", "강사 시수 관리", "강사별 과목 배정 시수를 확인합니다."),
             ("availability", "강사 가능 시간", "학기별 강사 가능 시간을 설정합니다."),
@@ -142,7 +142,10 @@ class MainWindow(QMainWindow):
         top.addWidget(QLabel("시간표 관리", objectName="eyebrow"))
         top.addStretch()
         import_button = QPushButton("엑셀 가져오기")
-        import_button.clicked.connect(self.import_excel)
+        import_menu = QMenu(import_button)
+        import_menu.addAction("기본 정보 가져오기").triggered.connect(self.import_excel)
+        import_menu.addAction("시간표 불러오기").triggered.connect(self.import_timetable)
+        import_button.setMenu(import_menu)
         top.addWidget(import_button)
         export_button = QPushButton("엑셀 내보내기")
         export_button.clicked.connect(self.export_excel)
@@ -221,6 +224,16 @@ class MainWindow(QMainWindow):
         dialog = ImportDialog(self, self.db, self.term.currentData())
         if dialog.exec() == dialog.DialogCode.Accepted:
             self.refresh_all()
+
+    def import_timetable(self):
+        term_id = self.term.currentData()
+        if term_id is None:
+            QMessageBox.information(self, "학기 선택", "시간표를 추가할 학기를 먼저 선택하세요.")
+            return
+        dialog = TimetableImportDialog(self, self.db, term_id)
+        if dialog.exec() == dialog.DialogCode.Accepted:
+            self.refresh_all()
+            self.show_page(self.pages.indexOf(self.schedule_page))
 
     def make_list_page(self, table, title):
         card = QFrame(objectName="card")

@@ -2,7 +2,7 @@
 
 from typing import NamedTuple, Optional
 
-from .db import facility_tags
+from .db import DAYS, facility_tags
 
 
 class RoomLesson(NamedTuple):
@@ -83,7 +83,7 @@ class Schedule:
     def set_availability(self, term_id, teacher_id, cells, status):
         cells = set(cells)
         if status not in ("AVAILABLE", "UNAVAILABLE", "UNSET") or not cells or any(
-            day not in range(5) or period not in range(1, 12) for day, period in cells
+            day not in range(len(DAYS)) or period not in range(1, 12) for day, period in cells
         ):
             raise ValueError("요일, 교시 및 가능 상태를 확인하세요.")
         with self.transaction():
@@ -98,7 +98,7 @@ class Schedule:
                         AND l.weekday=? AND l.start_period<=? AND l.start_period+l.length>? LIMIT 1""",
                         (term_id, teacher_id, day, period, period)).fetchone()
                     if lesson:
-                        raise ValueError(f"{('월', '화', '수', '목', '금')[day]}요일 {period}교시에 {lesson[0]}의 수업이 이미 배정되어 있습니다. 먼저 수업을 이동하거나 삭제하세요.")
+                        raise ValueError(f"{DAYS[day]}요일 {period}교시에 {lesson[0]}의 수업이 이미 배정되어 있습니다. 먼저 수업을 이동하거나 삭제하세요.")
             for day, period in cells:
                 if status == "UNSET":
                     self.conn.execute("DELETE FROM teacher_availability WHERE term_id=? AND teacher_id=? AND weekday=? AND period=?",
@@ -220,50 +220,53 @@ class Schedule:
             self.conn.execute("UPDATE lessons SET room_id=? WHERE id=?", (room_id, lesson.id))
 
     def assign(self, cohort_id, subject_id, teacher_id, room_id, weekday, start, lesson_id=None):
-        if weekday not in range(5) or start not in range(1, 12):
-            raise ValueError("월~금과 1~11교시를 선택하세요.")
         with self.transaction():
-            quota = self.conn.execute("""SELECT q.weekly_periods,q.session_length,c.term_id,s.active,c.student_count,s.required_facilities
-                FROM quotas q JOIN cohorts c ON c.id=q.cohort_id JOIN subjects s ON s.id=q.subject_id
-                WHERE q.cohort_id=? AND q.subject_id=?""", (cohort_id, subject_id)).fetchone()
-            if not quota or not quota[3]:
-                raise ValueError("선택한 반에 활성 과목의 주간 시수를 먼저 설정하세요.")
-            weekly, length, term_id, _, student_count, required_facilities = quota
-            if not self.conn.execute("SELECT 1 FROM teachers WHERE id=?", (teacher_id,)).fetchone():
-                raise ValueError("강사를 선택하세요.")
-            eligible = self.db.eligible_teachers(subject_id)
-            if eligible and teacher_id not in eligible:
-                raise ValueError("선택한 강사는 이 과목의 담당 강사로 등록되지 않았습니다.")
-            if room_id is not None:
-                self._validate_room(room_id, student_count, required_facilities)
-            if start + length - 1 > 11 or (length == 2 and start in (4, 8)):
-                raise ValueError("연강은 11교시를 넘거나 점심·저녁 경계를 가로지를 수 없습니다.")
-            unavailable = self.conn.execute("""SELECT period FROM teacher_availability
-                WHERE term_id=? AND teacher_id=? AND weekday=? AND status='UNAVAILABLE'
-                AND period>=? AND period<? ORDER BY period LIMIT 1""",
-                (term_id, teacher_id, weekday, start, start + length)).fetchone()
-            if unavailable:
-                raise ValueError(f"강사가 {unavailable[0]}교시에 불가능으로 설정되어 있습니다.")
-            if lesson_id is not None:
-                old = self.conn.execute("SELECT cohort_id,subject_id,locked FROM lessons WHERE id=?", (lesson_id,)).fetchone()
-                if not old or old[0] != cohort_id or old[1] != subject_id:
-                    raise ValueError("수업을 찾을 수 없거나 수업 대상이 변경되었습니다.")
-                if old[2]:
-                    raise ValueError("잠긴 수업은 먼저 잠금을 해제하세요.")
-            assigned = self.conn.execute("SELECT COALESCE(SUM(length),0) FROM lessons WHERE cohort_id=? AND subject_id=? AND id != ?", (cohort_id, subject_id, lesson_id or 0)).fetchone()[0]
-            if assigned + length > weekly:
-                raise ValueError("주간 설정 시수를 초과합니다.")
-            for c, t, r, cid, tid, rid in self._overlapping_lessons(term_id, weekday, start, length, lesson_id):
-                if cid != cohort_id and tid != teacher_id and (room_id is None or rid != room_id):
-                    continue
-                reason = "반" if cid == cohort_id else "강사" if tid == teacher_id else "강의실"
-                raise ValueError(f"{reason} 중복: {c} / {t}" + (f" / {r}" if r else ""))
-            if lesson_id is None:
-                self.conn.execute("INSERT INTO lessons(cohort_id,subject_id,teacher_id,room_id,weekday,start_period,length) VALUES (?,?,?,?,?,?,?)",
-                                  (cohort_id, subject_id, teacher_id, room_id, weekday, start, length))
-            else:
-                self.conn.execute("UPDATE lessons SET teacher_id=?, room_id=?, weekday=?, start_period=?, length=? WHERE id=?",
-                                  (teacher_id, room_id, weekday, start, length, lesson_id))
+            self._assign(cohort_id, subject_id, teacher_id, room_id, weekday, start, lesson_id)
+
+    def _assign(self, cohort_id, subject_id, teacher_id, room_id, weekday, start, lesson_id=None):
+        """호출자가 연 쓰기 트랜잭션 안에서 수업을 저장한다."""
+        if weekday not in range(len(DAYS)) or start not in range(1, 12):
+            raise ValueError("월~토와 1~11교시를 선택하세요.")
+        quota = self.conn.execute("""SELECT q.weekly_periods,q.session_length,c.term_id,s.active,c.student_count,s.required_facilities
+            FROM quotas q JOIN cohorts c ON c.id=q.cohort_id JOIN subjects s ON s.id=q.subject_id
+            WHERE q.cohort_id=? AND q.subject_id=?""", (cohort_id, subject_id)).fetchone()
+        if not quota or not quota[3]:
+            raise ValueError("선택한 반에 활성 과목의 주간 시수를 먼저 설정하세요.")
+        weekly, length, term_id, _, student_count, required_facilities = quota
+        if not self.conn.execute("SELECT 1 FROM teachers WHERE id=?", (teacher_id,)).fetchone():
+            raise ValueError("강사를 선택하세요.")
+        eligible = self.db.eligible_teachers(subject_id)
+        if eligible and teacher_id not in eligible:
+            raise ValueError("선택한 강사는 이 과목의 담당 강사로 등록되지 않았습니다.")
+        if room_id is not None:
+            self._validate_room(room_id, student_count, required_facilities)
+        if start + length - 1 > 11 or (length == 2 and start in (4, 8)):
+            raise ValueError("연강은 11교시를 넘거나 점심·저녁 경계를 가로지를 수 없습니다.")
+        unavailable = self.conn.execute("""SELECT period FROM teacher_availability
+            WHERE term_id=? AND teacher_id=? AND weekday=? AND status='UNAVAILABLE'
+            AND period>=? AND period<? ORDER BY period LIMIT 1""",
+            (term_id, teacher_id, weekday, start, start + length)).fetchone()
+        if unavailable:
+            raise ValueError(f"강사가 {unavailable[0]}교시에 불가능으로 설정되어 있습니다.")
+        if lesson_id is not None:
+            old = self.conn.execute("SELECT cohort_id,subject_id,locked FROM lessons WHERE id=?", (lesson_id,)).fetchone()
+            if not old or old[0] != cohort_id or old[1] != subject_id:
+                raise ValueError("수업을 찾을 수 없거나 수업 대상이 변경되었습니다.")
+            if old[2]:
+                raise ValueError("잠긴 수업은 먼저 잠금을 해제하세요.")
+        assigned = self.conn.execute("SELECT COALESCE(SUM(length),0) FROM lessons WHERE cohort_id=? AND subject_id=? AND id != ?", (cohort_id, subject_id, lesson_id or 0)).fetchone()[0]
+        if assigned + length > weekly:
+            raise ValueError("주간 설정 시수를 초과합니다.")
+        for c, t, r, cid, tid, rid in self._overlapping_lessons(term_id, weekday, start, length, lesson_id):
+            if cid != cohort_id and tid != teacher_id and (room_id is None or rid != room_id):
+                continue
+            reason = "반" if cid == cohort_id else "강사" if tid == teacher_id else "강의실"
+            raise ValueError(f"{reason} 중복: {c} / {t}" + (f" / {r}" if r else ""))
+        if lesson_id is None:
+            return self.conn.execute("INSERT INTO lessons(cohort_id,subject_id,teacher_id,room_id,weekday,start_period,length) VALUES (?,?,?,?,?,?,?)",
+                                     (cohort_id, subject_id, teacher_id, room_id, weekday, start, length)).lastrowid
+        self.conn.execute("UPDATE lessons SET teacher_id=?, room_id=?, weekday=?, start_period=?, length=? WHERE id=?",
+                          (teacher_id, room_id, weekday, start, length, lesson_id))
 
     def lock(self, lesson_id, locked):
         with self.transaction():

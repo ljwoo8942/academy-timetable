@@ -7,9 +7,8 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
+from .db import DAYS
 from .schedule import Schedule
-
-DAYS = ("월", "화", "수", "목", "금")
 
 
 def snapshot(db, term_id):
@@ -79,7 +78,7 @@ def export_timetable(db, term_id, destination):
             sheet.append(["확정 전 자료 · 강의실 미배정 수업 포함"])
             sheet.append(["교시", "시간"] + [day + "요일" for day in DAYS])
             for index, (start, end) in enumerate(periods, 1):
-                sheet.append([f"{index}교시", f"{start}~{end}"] + [None] * 5)
+                sheet.append([f"{index}교시", f"{start}~{end}"] + [None] * len(DAYS))
             for cid, cohort, sid, subject, tid, teacher, rid, room, day, start, length, locked in lessons:
                 if {"반": cid, "강사": tid, "강의실": rid}[kind] != target_id:
                     continue
@@ -89,8 +88,8 @@ def export_timetable(db, term_id, destination):
                     cell.value = f"{cell.value}\n---\n{name_line}" if cell.value else name_line
             sheet.column_dimensions["A"].width = 10
             sheet.column_dimensions["B"].width = 17
-            for column in "CDEFG":
-                sheet.column_dimensions[column].width = 24
+            for column in range(3, 3 + len(DAYS)):
+                sheet.column_dimensions[get_column_letter(column)].width = 24
             for row in range(4, 15):
                 sheet.row_dimensions[row].height = 52
             style_sheet(sheet, 3)

@@ -24,7 +24,7 @@ VERSION_5_TABLES = {
 TABLES = {**VERSION_5_TABLES, "teacher_subjects": ("subject_id", "teacher_id")}
 VERSION_4_TABLES = {**VERSION_5_TABLES, "subjects": ("id", "name", "active"), "rooms": ("id", "name", "capacity")}
 VERSION_3_TABLES = {**VERSION_4_TABLES, "rooms": ("id", "name"), "cohorts": ("id", "term_id", "name")}
-BACKUP_SCHEMAS = {3: VERSION_3_TABLES, 4: VERSION_4_TABLES, 5: VERSION_5_TABLES, SCHEMA_VERSION: TABLES}
+BACKUP_SCHEMAS = {3: VERSION_3_TABLES, 4: VERSION_4_TABLES, 5: VERSION_5_TABLES, 6: TABLES, SCHEMA_VERSION: TABLES}
 
 
 def database_path(db):
