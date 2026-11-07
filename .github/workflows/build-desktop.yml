@@ -90,3 +90,40 @@ jobs:
           path: dist/AcademyTimetable-macOS-arm64.zip
           archive: false
           if-no-files-found: error
+
+  publish:
+    name: Publish public downloads
+    needs: [windows, macos]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    concurrency:
+      group: desktop-release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: AcademyTimetable*
+          path: release
+          merge-multiple: true
+          skip-decompress: true
+      - name: Publish tested apps to GitHub Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          latest_sha=$(gh api "repos/$GH_REPO/branches/main" --jq .commit.sha)
+          if [ "$latest_sha" != "$GITHUB_SHA" ]; then
+            echo 'Skipping an older main build.'
+            exit 0
+          fi
+          tag="desktop-$GITHUB_SHA"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --target "$GITHUB_SHA" --draft \
+              --title "개발 확인용 실행 파일 ${GITHUB_SHA:0:7}" \
+              --notes 'GitHub 로그인과 Python 설치 없이 다운로드하고 실행할 수 있습니다. Windows x64는 AcademyTimetable.exe를 실행하고, Apple Silicon Mac은 zip 압축을 푼 뒤 학원 시간표.app을 실행하세요. 개발 확인용이며 Windows 배포 서명과 macOS 공증은 제공하지 않습니다.'
+          fi
+          gh release upload "$tag" release/AcademyTimetable.exe release/AcademyTimetable-macOS-arm64.zip --clobber
+          gh release edit "$tag" --draft=false --latest

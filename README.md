@@ -4,14 +4,16 @@
 
 ## 다운로드 및 실행
 
-GitHub에 로그인한 뒤 [데스크톱 앱 빌드](https://github.com/ljwoo8942/academy-timetable/actions/workflows/build-desktop.yml?query=branch%3Amain+is%3Asuccess)의 최신 성공 실행을 엽니다. 실행 화면 아래 **Artifacts**에서 운영체제에 맞는 파일을 받으세요.
+**GitHub 계정이나 로그인 없이** 아래 링크에서 운영체제에 맞는 최신 실행 파일을 받으세요. [전체 배포 목록](https://github.com/ljwoo8942/academy-timetable/releases)에서도 다운로드할 수 있습니다.
 
 | 운영체제 | 다운로드 | 실행 |
 | --- | --- | --- |
-| Windows x64 | `AcademyTimetable.exe` | 다운로드한 파일을 더블클릭합니다. |
-| Apple Silicon Mac | `AcademyTimetable-macOS-arm64.zip` | 압축을 푼 뒤 `학원 시간표.app`을 더블클릭합니다. |
+| Windows x64 | [AcademyTimetable.exe 다운로드](https://github.com/ljwoo8942/academy-timetable/releases/latest/download/AcademyTimetable.exe) | 다운로드한 파일을 더블클릭합니다. |
+| Apple Silicon Mac | [AcademyTimetable-macOS-arm64.zip 다운로드](https://github.com/ljwoo8942/academy-timetable/releases/latest/download/AcademyTimetable-macOS-arm64.zip) | 압축을 푼 뒤 `학원 시간표.app`을 더블클릭합니다. |
 
 앱 실행에는 Python 설치가 필요 없습니다. 다운로드 파일은 개발 확인용이며 Windows 배포 서명과 macOS 공증은 제공하지 않습니다. 새 버전으로 바꿀 때는 실행 중인 앱을 닫고 새 파일을 열면 됩니다. 학원 데이터는 사용자별 앱 데이터 폴더에 저장되므로 새 실행 파일에서도 이어서 사용할 수 있습니다.
+
+다운로드한 뒤에는 인터넷 연결이나 GitHub 로그인 없이 사용할 수 있습니다. `main`의 Windows·Mac 테스트와 빌드가 모두 통과하면 실행 파일이 공개 Releases에 자동 갱신됩니다.
 
 처음 실행했다면 오른쪽 위 **사용 방법 → 처음 시작하기**에서 예시 학기와 수업을 따라 만들어 보세요. 이미 사용 중이라면 **백업·복원**에서 현재 데이터를 백업할 수 있습니다.
 
