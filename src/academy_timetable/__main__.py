@@ -3,13 +3,14 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import QStandardPaths, Qt
-from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QFrame, QHBoxLayout,
+from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QDialog, QDialogButtonBox, QFrame, QHBoxLayout,
                                QFileDialog, QInputDialog, QLabel, QListWidget, QListWidgetItem, QMainWindow,
                                QMessageBox, QPushButton, QScrollArea, QStackedWidget, QTableWidget,
                                QTableWidgetItem, QVBoxLayout, QWidget)
 from .backup_ui import BackupPage
 from .db import CAPACITY_COLUMNS, FACILITY_COLUMNS, MAX_CAPACITY, Database, facility_tags
 from .excel_export import export_timetable
+from .help_ui import HelpDialog
 from .import_ui import ImportDialog
 from .review_ui import ReviewPage
 from .schedule_ui import RoomAssignmentPage, SchedulePage, TeacherAvailabilityPage, TeacherLoadPage
@@ -92,7 +93,7 @@ class MainWindow(QMainWindow):
             ("teacher_load", "강사 시수 관리", "강사별 과목 배정 시수를 확인합니다."),
             ("availability", "강사 가능 시간", "학기별 강사 가능 시간을 설정합니다."),
             ("review", "초안 검토", "저장된 시간표의 시수와 기본 충돌을 확인합니다."),
-            ("room_assignment", "강의실 배정", "저장된 수업의 강의실을 지정하거나 변경합니다."),
+            ("room_assignment", "강의실 배정", "강의실을 직접 지정하거나 미배정 수업의 자동 제안을 확인합니다."),
             ("backup", "백업·복원", "저장된 데이터를 백업하거나 복원합니다."),
         ]
         self.lists = {}
@@ -157,10 +158,14 @@ class MainWindow(QMainWindow):
         heading_text = QVBoxLayout()
         self.heading = QLabel(objectName="heading")
         self.description = QLabel(objectName="description")
+        self.description.setWordWrap(True)
         heading_text.addWidget(self.heading)
         heading_text.addWidget(self.description)
-        heading.addLayout(heading_text)
-        heading.addStretch()
+        heading.addLayout(heading_text, 1)
+        self.help_dialog = HelpDialog(self)
+        help_button = QPushButton("사용 방법")
+        help_button.clicked.connect(self.show_help)
+        heading.addWidget(help_button, alignment=Qt.AlignmentFlag.AlignTop)
         body.addLayout(heading)
 
         cards = QHBoxLayout()
@@ -178,9 +183,14 @@ class MainWindow(QMainWindow):
             cards.addWidget(card, 1)
         body.addLayout(cards)
         body.addWidget(self.pages, 1)
-        self.statusBar().showMessage("수동 편성: 반·강사·강의실 중복과 강사 불가 시간 검사 · 교과별 규칙·자동 편성·확정은 미지원")
+        self.statusBar().showMessage("수동 시간표 편집 · 강의실 자동 제안 · 초안 검토")
         self.refresh_all()
         self.show_page(2)
+
+    def show_help(self):
+        self.help_dialog.show()
+        self.help_dialog.raise_()
+        self.help_dialog.activateWindow()
 
     def export_excel(self):
         if self.term.currentData() is None:
@@ -232,7 +242,13 @@ class MainWindow(QMainWindow):
             button.clicked.connect(lambda checked=False, t=table, a=action: self.edit(t, a))
             toolbar.addWidget(button)
         box.addLayout(toolbar)
-        box.addWidget(QLabel("항목을 선택하여 수정하거나 관리할 수 있습니다.", objectName="muted"))
+        options = QHBoxLayout()
+        options.addWidget(QLabel("항목을 선택하여 수정하거나 관리할 수 있습니다.", objectName="muted"), 1)
+        if table == "subjects":
+            button = QPushButton("담당 강사 설정")
+            button.clicked.connect(lambda: self.edit("subjects", "eligible_teachers"))
+            options.addWidget(button)
+        box.addLayout(options)
         listing = QListWidget()
         listing.setAccessibleName(title + " 목록")
         listing.setAlternatingRowColors(True)
@@ -322,6 +338,10 @@ class MainWindow(QMainWindow):
                 field = "필수 시설" if table == "subjects" else "보유 시설"
                 display = ", ".join(facility_tags(facilities.get(row[0], ""))) or "등록 없음"
                 text += f" · {field} {display}"
+            if table == "subjects":
+                count = len(self.db.eligible_teachers(row[0]))
+                display = f"{count}명" if count else "미설정"
+                text += f" · 담당 강사 {display}"
             item = QListWidgetItem(text)
             item.setData(Qt.ItemDataRole.UserRole, row[0])
             listing.addItem(item)
@@ -375,6 +395,39 @@ class MainWindow(QMainWindow):
         self.review_page.set_term(self.term.currentData())
         self.room_assignment_page.set_term(self.term.currentData())
 
+    def edit_eligible_teachers(self, subject_id):
+        teachers = self.db.list("teachers")
+        if not teachers:
+            QMessageBox.information(self, "강사 필요", "강사 관리에서 강사를 먼저 등록하세요.")
+            return False
+        current = self.db.eligible_teachers(subject_id)
+        dialog = QDialog(self)
+        dialog.setWindowTitle("과목별 담당 강사 설정")
+        dialog.resize(420, 360)
+        layout = QVBoxLayout(dialog)
+        hint = QLabel("선택한 강사만 해당 과목에 배정할 수 있습니다. 모두 해제하면 등록된 강사 중에서 수동 배정할 수 있습니다. 모든 학기에 적용됩니다.")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        listing = QListWidget()
+        listing.setAccessibleName("과목별 담당 강사 선택")
+        for teacher_id, name in teachers:
+            item = QListWidgetItem(name, listing)
+            item.setData(Qt.ItemDataRole.UserRole, teacher_id)
+            item.setCheckState(Qt.CheckState.Checked if teacher_id in current else Qt.CheckState.Unchecked)
+        layout.addWidget(listing)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Save).setText("저장")
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("취소")
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return False
+        selected = {listing.item(i).data(Qt.ItemDataRole.UserRole) for i in range(listing.count())
+                    if listing.item(i).checkState() == Qt.CheckState.Checked}
+        self.db.set_eligible_teachers(subject_id, selected, expected=current)
+        return True
+
     def edit(self, table, action):
         if not self.discard_period_changes():
             return
@@ -407,6 +460,9 @@ class MainWindow(QMainWindow):
                 if not ok:
                     return
                 self.db.set_facilities(table, row_id, value)
+            elif action == "eligible_teachers":
+                if not self.edit_eligible_teachers(row_id):
+                    return
             else:
                 message = "선택한 항목을 삭제하시겠습니까?"
                 if table == "terms":
@@ -414,7 +470,7 @@ class MainWindow(QMainWindow):
                 elif table == "subjects":
                     message = "선택한 과목의 활성 상태를 변경하시겠습니까?"
                 elif table == "teachers":
-                    message = "강사를 삭제하면 저장된 가능 시간도 삭제됩니다. 수업에 배정된 강사는 삭제할 수 없습니다. 계속하시겠습니까?"
+                    message = "강사를 삭제하면 가능 시간과 과목의 담당 강사 설정에서도 삭제됩니다. 수업에 배정된 강사는 삭제할 수 없습니다. 계속하시겠습니까?"
                 if QMessageBox.question(self, "확인", message) != QMessageBox.StandardButton.Yes:
                     return
                 self.db.remove(table, row_id)

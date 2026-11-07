@@ -30,6 +30,7 @@ def review_draft(db, term_id):
         room_facilities = db.facility_values("rooms")
         occupancy = {}
         teacher_times = {}
+        eligible_teachers = {}
         for cohort_id, cohort in cohorts:
             quotas = schedule.quotas(cohort_id)
             if not quotas:
@@ -44,6 +45,11 @@ def review_draft(db, term_id):
             for lesson in schedule.lessons(cohort_id):
                 lesson_id, day, start, length, subject, teacher, room, _, subject_id, teacher_id, room_id = lesson
                 label = f"{cohort} · {subject} · {teacher} · {DAYS[day]}요일 {start}~{start + length - 1}교시"
+                if subject_id not in eligible_teachers:
+                    eligible_teachers[subject_id] = db.eligible_teachers(subject_id)
+                eligible = eligible_teachers[subject_id]
+                if eligible and teacher_id not in eligible:
+                    issues.append(("오류", "담당 강사 불일치", label))
                 if start + length - 1 > 11 or (length == 2 and start in (4, 8)):
                     issues.append(("오류", "연강 범위", f"{label}: 교시 범위 또는 점심·저녁 경계를 확인하세요."))
                 if room_id is None:

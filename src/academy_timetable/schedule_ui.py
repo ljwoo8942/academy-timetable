@@ -201,12 +201,14 @@ class SchedulePage(QFrame):
             return
         dialog, form = self.dialog("수업 배정 / 이동")
         subjects = QComboBox()
+        subjects.setAccessibleName("배정 과목")
         for subject_id, name, weekly, length, assigned, active in self.schedule.quotas(self.cohort.currentData()):
             if active:
                 subjects.addItem(f"{name} ({length}교시, 잔여 {weekly - assigned})", subject_id)
         teachers = QComboBox()
-        for row_id, name in self.db.list("teachers"):
-            teachers.addItem(name, row_id)
+        teachers.setAccessibleName("배정 강사")
+        teachers.setPlaceholderText("담당 강사 선택")
+        teacher_rows = self.db.list("teachers")
         rooms = QComboBox()
         rooms.addItem("미배정", None)
         capacities = self.db.capacity_values("rooms")
@@ -214,7 +216,7 @@ class SchedulePage(QFrame):
             capacity = capacities.get(row_id)
             display = f"{capacity}명" if capacity is not None else "미설정"
             rooms.addItem(f"{name} · 정원 {display}", row_id)
-        if not subjects.count() or not teachers.count():
+        if not subjects.count() or not teacher_rows:
             QMessageBox.information(self, "기본 정보 필요", "활성 과목의 주간 시수와 강사를 먼저 등록하세요.")
             return
         days = QComboBox()
@@ -225,13 +227,24 @@ class SchedulePage(QFrame):
         if lesson:
             subjects.setCurrentIndex(subjects.findData(lesson[8]))
             subjects.setEnabled(False)
-            teachers.setCurrentIndex(teachers.findData(lesson[9]))
             rooms.setCurrentIndex(rooms.findData(lesson[10]))
             days.setCurrentIndex(lesson[1])
             start.setValue(lesson[2])
         else:
             days.setCurrentIndex(self.grid.currentColumn())
             start.setValue(self.grid.currentRow() + 1)
+
+        def refresh_teachers():
+            current = lesson[9] if lesson else teachers.currentData()
+            eligible = self.db.eligible_teachers(subjects.currentData())
+            teachers.clear()
+            for teacher_id, name in teacher_rows:
+                if not eligible or teacher_id in eligible:
+                    teachers.addItem(name, teacher_id)
+            teachers.setCurrentIndex(0 if current is None else teachers.findData(current))
+
+        subjects.currentIndexChanged.connect(refresh_teachers)
+        refresh_teachers()
         form.addRow("과목", subjects)
         form.addRow("강사", teachers)
         form.addRow("강의실", rooms)
@@ -270,6 +283,8 @@ class SchedulePage(QFrame):
 
 
 class RoomAssignmentPage(QFrame):
+    COLUMNS = ("요일·교시", "반", "과목", "강사", "강의실")
+
     def __init__(self, db):
         super().__init__(objectName="card")
         self.db = db
@@ -280,15 +295,18 @@ class RoomAssignmentPage(QFrame):
         toolbar = QHBoxLayout()
         toolbar.addWidget(QLabel("수업별 강의실 배정", objectName="cardTitle"))
         toolbar.addStretch()
+        self.suggest_button = QPushButton("자동 제안")
+        self.suggest_button.clicked.connect(self.suggest)
+        toolbar.addWidget(self.suggest_button)
         refresh = QPushButton("새로고침")
         refresh.clicked.connect(self.refresh)
         toolbar.addWidget(refresh)
         layout.addLayout(toolbar)
         self.summary = QLabel()
         layout.addWidget(self.summary)
-        self.table = QTableWidget(0, 5)
+        self.table = QTableWidget(0, len(self.COLUMNS))
         self.table.setAccessibleName("학기별 강의실 배정 현황")
-        self.table.setHorizontalHeaderLabels(["요일·교시", "반", "과목", "강사", "강의실"])
+        self.table.setHorizontalHeaderLabels(self.COLUMNS)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -330,23 +348,67 @@ class RoomAssignmentPage(QFrame):
         pending = sum(lesson.room_id is None for lesson in self.rows)
         self.summary.setText("학기를 먼저 선택하세요." if self.term_id is None else
                              f"전체 {len(self.rows)}개 수업 · 강의실 미배정 {pending}개")
+        self.suggest_button.setEnabled(pending > 0)
         self.table.blockSignals(True)
         self.table.setRowCount(0)
         self.table.setRowCount(len(self.rows))
         for row, lesson in enumerate(self.rows):
-            end = lesson.start + lesson.length - 1
-            periods = f"{lesson.start}~{end}" if end > lesson.start else str(lesson.start)
             room = lesson.room if lesson.room_id is not None else "미배정"
             if lesson.locked:
                 room += " (잠김)"
-            for col, value in enumerate((f"{DAYS[lesson.weekday]} {periods}교시", lesson.cohort, lesson.subject, lesson.teacher, room)):
-                item = QTableWidgetItem(value)
-                item.setToolTip(value)
-                self.table.setItem(row, col, item)
+            self._fill_row(self.table, row, lesson, room)
             if selected and selected.id == lesson.id:
                 self.table.setCurrentCell(row, 0)
         self.table.blockSignals(False)
         self.refresh_choices()
+
+    @staticmethod
+    def _fill_row(table, row, lesson, result):
+        end = lesson.start + lesson.length - 1
+        periods = f"{lesson.start}~{end}" if end > lesson.start else str(lesson.start)
+        values = (f"{DAYS[lesson.weekday]} {periods}교시", lesson.cohort, lesson.subject, lesson.teacher, result)
+        for col, value in enumerate(values):
+            item = QTableWidgetItem(value)
+            item.setToolTip(value)
+            table.setItem(row, col, item)
+
+    def suggest(self):
+        term_id = self.term_id
+        try:
+            suggestions = self.schedule.suggest_rooms(term_id)
+        except Exception as exc:
+            QMessageBox.warning(self, "강의실 제안 실패", str(exc))
+            return
+        assigned = sum(row.room_id is not None for row in suggestions)
+        dialog = QDialog(self)
+        dialog.setWindowTitle("강의실 자동 제안")
+        dialog.resize(740, 440)
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(QLabel(f"배정 제안 {assigned}개 · 미배정 {len(suggestions) - assigned}개"))
+        layout.addWidget(QLabel("적용하면 제안된 강의실만 저장합니다. 미배정 수업은 개별 조정할 수 있습니다."))
+        preview = QTableWidget(len(suggestions), len(self.COLUMNS))
+        preview.setAccessibleName("강의실 제안과 미배정 사유")
+        preview.setHorizontalHeaderLabels([*self.COLUMNS[:-1], "제안 강의실 / 미배정 사유"])
+        preview.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        preview.setAlternatingRowColors(True)
+        preview.verticalHeader().hide()
+        preview.horizontalHeader().setStretchLastSection(True)
+        for row, (lesson, room_id, result) in enumerate(suggestions):
+            self._fill_row(preview, row, lesson, result if room_id is not None else f"미배정 · {result}")
+        layout.addWidget(preview)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("닫기" if not assigned else "취소")
+        if assigned:
+            buttons.addButton("제안 적용", QDialogButtonBox.ButtonRole.AcceptRole)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() == QDialog.DialogCode.Accepted and assigned:
+            try:
+                self.schedule.apply_room_suggestions(term_id, suggestions)
+            except Exception as exc:
+                QMessageBox.warning(self, "강의실 저장 실패", str(exc))
+        self.refresh()
 
     def refresh_choices(self):
         lesson = self.selected_lesson()

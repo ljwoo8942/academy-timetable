@@ -9,7 +9,7 @@ DEFAULT_PERIODS = (
     ("19:40", "20:30"), ("20:40", "21:30"),
 )
 TABLES = {"terms", "cohorts", "teachers", "subjects", "rooms"}
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 CAPACITY_COLUMNS = {"cohorts": "student_count", "rooms": "capacity"}
 FACILITY_COLUMNS = {"subjects": "required_facilities", "rooms": "facilities"}
 MAX_CAPACITY = 2147483647
@@ -100,9 +100,14 @@ class Database:
                 if version < 5:
                     for table, column in FACILITY_COLUMNS.items():
                         self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
-                    if version in (3, 4):
+                if version < 6:
+                    self.conn.execute("""CREATE TABLE teacher_subjects (
+                        subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+                        teacher_id INTEGER NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
+                        PRIMARY KEY(subject_id, teacher_id))""")
+                    if version >= 3:
                         self.advance_generation()
-                    self.conn.execute("PRAGMA user_version = 5")
+                    self.conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         self.restore_generation = self.conn.execute("PRAGMA application_id").fetchone()[0]
 
     def advance_generation(self):
@@ -185,6 +190,25 @@ class Database:
             result = self.conn.execute(f"UPDATE {table} SET {column}=? WHERE id=?", (value, row_id))
             if result.rowcount != 1:
                 raise ValueError("선택한 항목을 찾을 수 없습니다.")
+
+    def eligible_teachers(self, subject_id):
+        return {row[0] for row in self.conn.execute(
+            "SELECT teacher_id FROM teacher_subjects WHERE subject_id=?", (subject_id,)
+        )}
+
+    def set_eligible_teachers(self, subject_id, teacher_ids, *, expected):
+        selected = set(teacher_ids)
+        with self.transaction():
+            if not self.conn.execute("SELECT 1 FROM subjects WHERE id=?", (subject_id,)).fetchone():
+                raise ValueError("선택한 과목을 찾을 수 없습니다.")
+            current = self.eligible_teachers(subject_id)
+            if current != expected:
+                raise ValueError("담당 강사 설정이 변경되었습니다. 목록을 다시 열어 확인하세요.")
+            if not selected.issubset(teacher_id for teacher_id, _ in self.list("teachers")):
+                raise ValueError("선택한 강사를 찾을 수 없습니다. 목록을 다시 열어 확인하세요.")
+            self.conn.execute("DELETE FROM teacher_subjects WHERE subject_id=?", (subject_id,))
+            self.conn.executemany("INSERT INTO teacher_subjects(subject_id, teacher_id) VALUES (?, ?)",
+                                  ((subject_id, teacher_id) for teacher_id in selected))
 
     def periods(self, term_id):
         return self.conn.execute("SELECT start, end FROM periods WHERE term_id = ? ORDER BY number", (term_id,)).fetchall()

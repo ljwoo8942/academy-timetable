@@ -20,6 +20,12 @@ class RoomLesson(NamedTuple):
     required_facilities: str
 
 
+class RoomSuggestion(NamedTuple):
+    lesson: RoomLesson
+    room_id: Optional[int]
+    result: str
+
+
 def room_fits(student_count, capacity):
     return student_count is None or capacity is None or student_count <= capacity
 
@@ -141,6 +147,53 @@ class Schedule:
             and not missing_facilities(lesson.required_facilities, facilities)
         ]
 
+    def suggest_rooms(self, term_id):
+        self.conn.execute("BEGIN")
+        try:
+            self.db.assert_current()
+            return self._room_suggestions(term_id)
+        finally:
+            self.conn.rollback()
+
+    def _room_suggestions(self, term_id):
+        lessons = [lesson for lesson in self.room_lessons(term_id) if lesson.room_id is None]
+        capacities = self.db.capacity_values("rooms")
+        candidates = {}
+        suggestions = {}
+        for lesson in lessons:
+            if lesson.locked:
+                reason = "수업 잠김"
+            elif lesson.student_count is None:
+                reason = "반 인원 미설정"
+            else:
+                available = self.available_rooms(term_id, lesson)
+                confirmed = [(room_id, name) for room_id, name in available if capacities[room_id] is not None]
+                if confirmed:
+                    candidates[lesson] = sorted(confirmed, key=lambda room: capacities[room[0]])
+                    reason = "조건을 충족하는 강의실을 다른 수업에 제안함"
+                else:
+                    reason = "후보 강의실 정원 미설정" if available else "시간·정원·시설 조건을 충족하는 빈 강의실 없음"
+            suggestions[lesson.id] = RoomSuggestion(lesson, None, reason)
+
+        reserved = set()
+        # shortcut: first-fit can leave lessons unassigned, use a solver if maximum coverage is needed.
+        for lesson in sorted(candidates, key=lambda item: (len(candidates[item]), -item.length)):
+            for room_id, name in candidates[lesson]:
+                cells = {(room_id, lesson.weekday, period) for period in range(lesson.start, lesson.start + lesson.length)}
+                if cells.isdisjoint(reserved):
+                    reserved.update(cells)
+                    suggestions[lesson.id] = RoomSuggestion(lesson, room_id, name)
+                    break
+        return list(suggestions.values())
+
+    def apply_room_suggestions(self, term_id, suggestions):
+        with self.transaction():
+            if self._room_suggestions(term_id) != suggestions:
+                raise ValueError("미리보기 이후 제안 결과가 변경되었습니다. 제안을 다시 확인하세요.")
+            self.conn.executemany("UPDATE lessons SET room_id=? WHERE id=?", (
+                (room_id, lesson.id) for lesson, room_id, _ in suggestions if room_id is not None
+            ))
+
     def _validate_room(self, room_id, student_count, required_facilities):
         room = self.conn.execute("SELECT capacity, facilities FROM rooms WHERE id=?", (room_id,)).fetchone()
         if room is None:
@@ -178,6 +231,9 @@ class Schedule:
             weekly, length, term_id, _, student_count, required_facilities = quota
             if not self.conn.execute("SELECT 1 FROM teachers WHERE id=?", (teacher_id,)).fetchone():
                 raise ValueError("강사를 선택하세요.")
+            eligible = self.db.eligible_teachers(subject_id)
+            if eligible and teacher_id not in eligible:
+                raise ValueError("선택한 강사는 이 과목의 담당 강사로 등록되지 않았습니다.")
             if room_id is not None:
                 self._validate_room(room_id, student_count, required_facilities)
             if start + length - 1 > 11 or (length == 2 and start in (4, 8)):
