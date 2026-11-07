@@ -2,6 +2,7 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
+DAYS = ("월", "화", "수", "목", "금", "토")
 DEFAULT_PERIODS = (
     ("08:30", "09:20"), ("09:30", "10:20"), ("10:30", "11:20"),
     ("11:30", "12:20"), ("13:30", "14:20"), ("14:30", "15:20"),
@@ -9,10 +10,31 @@ DEFAULT_PERIODS = (
     ("19:40", "20:30"), ("20:40", "21:30"),
 )
 TABLES = {"terms", "cohorts", "teachers", "subjects", "rooms"}
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 CAPACITY_COLUMNS = {"cohorts": "student_count", "rooms": "capacity"}
 FACILITY_COLUMNS = {"subjects": "required_facilities", "rooms": "facilities"}
 MAX_CAPACITY = 2147483647
+
+
+LESSONS_SCHEMA = """CREATE TABLE {table} (
+    id INTEGER PRIMARY KEY,
+    cohort_id INTEGER NOT NULL REFERENCES cohorts(id) ON DELETE RESTRICT,
+    subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE RESTRICT,
+    teacher_id INTEGER NOT NULL REFERENCES teachers(id) ON DELETE RESTRICT,
+    room_id INTEGER REFERENCES rooms(id) ON DELETE RESTRICT,
+    weekday INTEGER NOT NULL CHECK(weekday BETWEEN 0 AND 5),
+    start_period INTEGER NOT NULL CHECK(start_period BETWEEN 1 AND 11),
+    length INTEGER NOT NULL CHECK(length IN (1, 2)),
+    locked INTEGER NOT NULL DEFAULT 0 CHECK(locked IN (0, 1)),
+    FOREIGN KEY(cohort_id, subject_id) REFERENCES quotas(cohort_id, subject_id) ON DELETE RESTRICT)"""
+
+AVAILABILITY_SCHEMA = """CREATE TABLE {table} (
+    term_id INTEGER NOT NULL REFERENCES terms(id) ON DELETE CASCADE,
+    teacher_id INTEGER NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
+    weekday INTEGER NOT NULL CHECK(weekday BETWEEN 0 AND 5),
+    period INTEGER NOT NULL CHECK(period BETWEEN 1 AND 11),
+    status TEXT NOT NULL CHECK(status IN ('AVAILABLE', 'UNAVAILABLE')),
+    PRIMARY KEY(term_id, teacher_id, weekday, period))"""
 
 
 def facility_tags(text):
@@ -74,25 +96,9 @@ class Database:
                         weekly_periods INTEGER NOT NULL CHECK(weekly_periods > 0 AND weekly_periods <= 55),
                         session_length INTEGER NOT NULL CHECK(session_length IN (1, 2)),
                         PRIMARY KEY(cohort_id, subject_id))""")
-                    self.conn.execute("""CREATE TABLE lessons (
-                        id INTEGER PRIMARY KEY,
-                        cohort_id INTEGER NOT NULL REFERENCES cohorts(id) ON DELETE RESTRICT,
-                        subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE RESTRICT,
-                        teacher_id INTEGER NOT NULL REFERENCES teachers(id) ON DELETE RESTRICT,
-                        room_id INTEGER REFERENCES rooms(id) ON DELETE RESTRICT,
-                        weekday INTEGER NOT NULL CHECK(weekday BETWEEN 0 AND 4),
-                        start_period INTEGER NOT NULL CHECK(start_period BETWEEN 1 AND 11),
-                        length INTEGER NOT NULL CHECK(length IN (1, 2)),
-                        locked INTEGER NOT NULL DEFAULT 0 CHECK(locked IN (0, 1)),
-                        FOREIGN KEY(cohort_id, subject_id) REFERENCES quotas(cohort_id, subject_id) ON DELETE RESTRICT)""")
+                    self.conn.execute(LESSONS_SCHEMA.format(table="lessons"))
                 if version < 3:
-                    self.conn.execute("""CREATE TABLE teacher_availability (
-                        term_id INTEGER NOT NULL REFERENCES terms(id) ON DELETE CASCADE,
-                        teacher_id INTEGER NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
-                        weekday INTEGER NOT NULL CHECK(weekday BETWEEN 0 AND 4),
-                        period INTEGER NOT NULL CHECK(period BETWEEN 1 AND 11),
-                        status TEXT NOT NULL CHECK(status IN ('AVAILABLE', 'UNAVAILABLE')),
-                        PRIMARY KEY(term_id, teacher_id, weekday, period))""")
+                    self.conn.execute(AVAILABILITY_SCHEMA.format(table="teacher_availability"))
                 if version < 4:
                     for table, column in CAPACITY_COLUMNS.items():
                         self.conn.execute(f"""ALTER TABLE {table} ADD COLUMN {column} INTEGER
@@ -105,6 +111,16 @@ class Database:
                         subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
                         teacher_id INTEGER NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
                         PRIMARY KEY(subject_id, teacher_id))""")
+                if version < 7:
+                    for minimum, table, schema in (
+                        (2, "lessons", LESSONS_SCHEMA), (3, "teacher_availability", AVAILABILITY_SCHEMA)
+                    ):
+                        if version >= minimum:
+                            replacement = f"{table}_new"
+                            self.conn.execute(schema.format(table=replacement))
+                            self.conn.execute(f"INSERT INTO {replacement} SELECT * FROM {table}")
+                            self.conn.execute(f"DROP TABLE {table}")
+                            self.conn.execute(f"ALTER TABLE {replacement} RENAME TO {table}")
                     if version >= 3:
                         self.advance_generation()
                     self.conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")

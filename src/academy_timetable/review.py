@@ -1,9 +1,6 @@
 """저장된 시간표 초안의 지원 가능한 항목만 검토한다."""
-from .db import validate_periods
+from .db import DAYS, validate_periods
 from .schedule import Schedule, missing_facilities, room_fits
-
-DAYS = ("월", "화", "수", "목", "금")
-
 
 def review_draft(db, term_id):
     db.conn.execute("BEGIN")

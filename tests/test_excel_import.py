@@ -7,9 +7,12 @@ from openpyxl import Workbook
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
 from academy_timetable.db import Database
+from academy_timetable.excel_export import export_timetable
 from academy_timetable.excel_import import apply_import, preview, read_sheet, sheet_names
 from academy_timetable.__main__ import MainWindow
-from academy_timetable.import_ui import ImportDialog
+from academy_timetable.import_ui import ImportDialog, TimetableImportDialog
+from academy_timetable.schedule import Schedule
+from academy_timetable.timetable_import import apply_timetable, preview_timetable, read_timetable
 
 
 class ExcelImportTests(unittest.TestCase):
@@ -88,6 +91,111 @@ class ExcelImportTests(unittest.TestCase):
         self.assertEqual(dialog.result(), dialog.DialogCode.Accepted)
         self.assertEqual(self.db.list("cohorts", self.term)[0][1], "A반")
         window.close()
+
+    def test_timetable_dialog_imports_only_the_selected_sheet(self):
+        workbook = Workbook()
+        for sheet, cohort in ((workbook.active, "다른 반"), (workbook.create_sheet("선택할 시트"), "A반")):
+            sheet.append(["반", "과목", "강사", "요일", "시작 교시", "종료 교시"])
+            sheet.append([cohort, "수학", "김강사", "월요일", "1교시", 2])
+        workbook.save(self.path)
+        workbook.close()
+        window = MainWindow(self.db)
+        dialog = TimetableImportDialog(window, self.db, self.term)
+        with patch.object(QFileDialog, "getOpenFileName", return_value=(str(self.path), "")):
+            dialog.choose_file()
+        self.assertFalse(dialog.preview_button.isEnabled())
+        dialog.sheet.setCurrentIndex(0)
+        dialog.make_preview()
+        self.assertTrue(dialog.apply_button.isEnabled())
+        self.assertEqual(self.db.list("cohorts", self.term), [])
+        dialog.sheet.setCurrentText("선택할 시트")
+        self.assertFalse(dialog.apply_button.isEnabled())
+        self.assertEqual(dialog.table.rowCount(), 0)
+        dialog.make_preview()
+        self.assertEqual(dialog.table.item(0, 2).text(), "A반")
+        with patch.object(QMessageBox, "information"):
+            dialog.apply()
+        self.assertEqual(dialog.result(), dialog.DialogCode.Accepted)
+        self.assertEqual([row[1] for row in self.db.list("cohorts", self.term)], ["A반"])
+        self.assertEqual(Schedule(self.db).room_lessons(self.term)[0].length, 2)
+        window.close()
+
+    def test_timetable_round_trip_preserves_locks_and_skips_existing_lessons(self):
+        for table, name in (("cohorts", "A반"), ("subjects", "수학"), ("teachers", "김강사"), ("rooms", "101호")):
+            self.db.add(table, name, self.term)
+        cohort = self.db.list("cohorts", self.term)[0][0]
+        subject, teacher, room = (self.db.list(table)[0][0] for table in ("subjects", "teachers", "rooms"))
+        schedule = Schedule(self.db)
+        schedule.save_quota(cohort, subject, 4, 2)
+        schedule.assign(cohort, subject, teacher, room, 0, 1)
+        schedule.lock(schedule.lessons(cohort)[0][0], True)
+        schedule.assign(cohort, subject, teacher, None, 1, 2)
+        export_timetable(self.db, self.term, self.path)
+        self.db.add("terms", "가져오기 학기")
+        target = next(row[0] for row in self.db.list("terms") if row[1] == "가져오기 학기")
+        rows = read_timetable(self.path, "전체_배정목록")
+        self.assertEqual([row.number for row in rows], [4, 5])
+        approved = preview_timetable(self.db, target, rows)
+        self.assertEqual(self.db.list("cohorts", target), [])
+        self.assertEqual(apply_timetable(self.db, target, rows, approved), 2)
+        copied = sorted(schedule.room_lessons(target), key=lambda row: row.weekday)
+        self.assertEqual([(row.start, row.length, row.room_id, row.locked) for row in copied],
+                         [(1, 2, room, 1), (2, 2, None, 0)])
+        repeat = preview_timetable(self.db, target, rows)
+        self.assertEqual([action for action, _ in repeat[1]], ["건너뜀", "건너뜀"])
+
+    def test_timetable_conflict_after_preview_rolls_back_new_names_and_lessons(self):
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.append(["반", "과목", "강사", "요일", "교시"])
+        sheet.append(["새 반", "영어", "새 강사", "화", 1])
+        sheet.append(["다른 반", "수학", "김강사", "월", 1])
+        workbook.save(self.path)
+        workbook.close()
+        rows = read_timetable(self.path, sheet.title)
+        approved = preview_timetable(self.db, self.term, rows)
+        self.db.add("cohorts", "기존 반", self.term)
+        self.db.add("teachers", "김강사")
+        self.db.add("subjects", "수학")
+        schedule = Schedule(self.db)
+        cohort = self.db.list("cohorts", self.term)[0][0]
+        subject, teacher = (self.db.list(table)[0][0] for table in ("subjects", "teachers"))
+        schedule.save_quota(cohort, subject, 1, 1)
+        schedule.assign(cohort, subject, teacher, None, 0, 1)
+        with self.assertRaisesRegex(ValueError, "변경되었습니다"):
+            apply_timetable(self.db, self.term, rows, approved)
+        self.assertEqual([row[1] for row in self.db.list("cohorts", self.term)], ["기존 반"])
+        self.assertEqual([row[1] for row in self.db.list("teachers")], ["김강사"])
+        changed = preview_timetable(self.db, self.term, rows)
+        self.assertIn("강사 중복", changed[1][1][1])
+        self.assertEqual(len(schedule.room_lessons(self.term)), 1)
+
+    def test_grid_timetable_imports_saturday_and_excludes_every_508_column(self):
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.cell(3, 2, "요일")
+        sheet.cell(5, 2, "반")
+        for column, day, cohort in ((3, "월", 601), (4, None, 508), (5, "토", 601), (6, None, 508)):
+            if day:
+                sheet.cell(3, column, day)
+            sheet.cell(5, column, cohort)
+            sheet.cell(7, column, "국한\n단과" if column == 5 else "수학1\nA1")
+            if column != 5:
+                sheet.cell(8, column, "수고")
+        sheet.cell(7, 2, 1)
+        workbook.save(self.path)
+        workbook.close()
+        rows = read_timetable(self.path, sheet.title, ["508반"])
+        self.assertEqual([row.number for row in rows], ["C7", "E7"])
+        self.assertEqual(rows[1].lesson.teacher, "국한")
+        approved = preview_timetable(self.db, self.term, rows)
+        self.assertEqual(apply_timetable(self.db, self.term, rows, approved), 2)
+        schedule = Schedule(self.db)
+        self.assertEqual([row[1] for row in self.db.list("cohorts", self.term)], ["601"])
+        self.assertEqual({row.weekday for row in schedule.room_lessons(self.term)}, {0, 5})
+        export_timetable(self.db, self.term, self.path)
+        exported = read_timetable(self.path, "전체_배정목록")
+        self.assertEqual({row.lesson.weekday for row in exported}, {0, 5})
 
 
 if __name__ == "__main__":

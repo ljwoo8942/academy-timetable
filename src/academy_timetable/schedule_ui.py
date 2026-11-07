@@ -3,11 +3,8 @@ from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFormLayout
                                QHBoxLayout, QLabel, QMessageBox, QPushButton, QSpinBox,
                                QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout)
 
-from .db import facility_tags
+from .db import DAYS, facility_tags
 from .schedule import Schedule
-
-
-DAYS = ("월", "화", "수", "목", "금")
 
 
 class SchedulePage(QFrame):
@@ -64,7 +61,7 @@ class SchedulePage(QFrame):
             button.clicked.connect(handler)
             grid_bar.addWidget(button)
         grid_box.addLayout(grid_bar)
-        self.grid = QTableWidget(11, 5)
+        self.grid = QTableWidget(11, len(DAYS))
         self.grid.setAccessibleName("반별 주간 시간표")
         self.grid.setHorizontalHeaderLabels([day + "요일" for day in DAYS])
         self.grid.setVerticalHeaderLabels([f"{i}교시" for i in range(1, 12)])
@@ -511,7 +508,7 @@ class TeacherAvailabilityPage(QFrame):
             label = QLabel(text, objectName="muted")
             label.setWordWrap(True)
             box.addWidget(label)
-        self.grid = QTableWidget(11, 5)
+        self.grid = QTableWidget(11, len(DAYS))
         self.grid.setAccessibleName("강사 요일별 가능 시간")
         self.grid.setHorizontalHeaderLabels([day + "요일" for day in DAYS])
         self.grid.setVerticalHeaderLabels([f"{i}교시" for i in range(1, 12)])
@@ -552,7 +549,7 @@ class TeacherAvailabilityPage(QFrame):
         labels = {"AVAILABLE": ("가능", "#e7f6ed"), "UNAVAILABLE": ("불가", "#fde9e9"), "UNSET": ("미설정", "#f4f6f9")}
         self.grid.clearContents()
         for period in range(1, 12):
-            for day in range(5):
+            for day in range(len(DAYS)):
                 status = states.get((day, period), "UNSET")
                 label, color = labels[status]
                 item = QTableWidgetItem(label)

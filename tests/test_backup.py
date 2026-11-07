@@ -116,6 +116,26 @@ class BackupTests(unittest.TestCase):
         self.assertEqual(self.db.facility_values("subjects")[self.subject], "빔프로젝터")
         self.assertEqual(self.db.eligible_teachers(self.subject), set())
 
+    def test_version_six_upgrade_and_backup_restore_support_saturday(self):
+        self.db.set_eligible_teachers(self.subject, {self.teacher}, expected=set())
+        self.schedule.set_availability(self.term, self.teacher, {(0, 1)}, "AVAILABLE")
+        backup_to(self.db, self.backup)
+        old = sqlite3.connect(self.backup)
+        make_legacy_fixture(old, 6)
+        old.close()
+        upgraded = Database(self.backup)
+        try:
+            schedule = Schedule(upgraded)
+            self.assertEqual(upgraded.eligible_teachers(self.subject), {self.teacher})
+            self.assertEqual(schedule.availability(self.term, self.teacher), [(0, 1, "AVAILABLE")])
+            self.assertEqual(len(schedule.lessons(self.cohort)), 1)
+            schedule.assign(self.cohort, self.subject, self.teacher, None, 5, 1, schedule.lessons(self.cohort)[0][0])
+            self.assertEqual(schedule.lessons(self.cohort)[0][1], 5)
+        finally:
+            upgraded.conn.close()
+        restore_from(self.db, self.backup)
+        self.assertEqual(self.schedule.lessons(self.cohort)[0][1], 5)
+
     def test_invalid_or_same_database_rejected_without_changes(self):
         before = self.schedule.lessons(self.cohort)
         with self.assertRaises(ValueError):

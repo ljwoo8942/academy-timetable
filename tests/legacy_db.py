@@ -4,7 +4,17 @@ def make_legacy_fixture(connection, version):
     connection.execute("PRAGMA foreign_keys = OFF")
     connection.execute("BEGIN")
     with connection:
-        connection.execute("DROP TABLE teacher_subjects")
+        if version < 6:
+            connection.execute("DROP TABLE teacher_subjects")
+        for table in ("lessons", "teacher_availability"):
+            sql = connection.execute("SELECT sql FROM sqlite_master WHERE name=?", (table,)).fetchone()[0]
+            old_table = f"old_{table}"
+            sql = sql.replace(f"CREATE TABLE {table}", f"CREATE TABLE {old_table}", 1)
+            sql = sql.replace(f'CREATE TABLE "{table}"', f"CREATE TABLE {old_table}", 1)
+            connection.execute(sql.replace("BETWEEN 0 AND 5", "BETWEEN 0 AND 4"))
+            connection.execute(f"INSERT INTO {old_table} SELECT * FROM {table}")
+            connection.execute(f"DROP TABLE {table}")
+            connection.execute(f"ALTER TABLE {old_table} RENAME TO {table}")
         if version < 5:
             capacity_column = ", capacity INTEGER" if version == 4 else ""
             room_columns = "id, name, capacity" if version == 4 else "id, name"
