@@ -201,7 +201,7 @@ def launch_update(config):
         settings.write_text(json.dumps(config, ensure_ascii=False), encoding='utf-8')
         powershell = str(Path(os.environ['SystemRoot']) / 'System32/WindowsPowerShell/v1.0/powershell.exe')
         args = [powershell, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', str(script), str(settings)]
-        options = {'creationflags': 0x08000000 | 0x00000008}
+        options = {'creationflags': subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0x08000000}
     else:
         args = ['/bin/bash', str(script), str(config['pid']), config['target'], config['incoming'],
                 config['previous'], config['install_stage'], config['stage']]

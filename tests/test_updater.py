@@ -147,6 +147,7 @@ class UpdateTests(unittest.TestCase):
         args = start.call_args.args[0]
         self.assertEqual(Path(args[-2]).name, 'apply-update.ps1')
         self.assertTrue(start.call_args.kwargs['close_fds'])
+        self.assertEqual(start.call_args.kwargs['creationflags'], 0x08000000)
         self.assertEqual(start.call_args.kwargs['env']['PYINSTALLER_RESET_ENVIRONMENT'], '1')
         saved = json.loads((self.root / 'install.json').read_text())
         self.assertEqual(saved['target'], str(target))
