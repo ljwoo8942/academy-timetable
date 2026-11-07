@@ -30,34 +30,20 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: .\.venv\Scripts\python.exe -m unittest discover -s tests
-      - name: Build Windows executable
+      - name: Build Windows executable and installer
         run: .\scripts\build-windows.ps1
-      - name: Check executable startup
+      - name: Check offline installation and bundled Python startup
         env:
           QT_QPA_PLATFORM: offscreen
-        run: |
-          $python = '.\.venv\Scripts\python.exe'
-          $db = & $python -c 'from PySide6.QtCore import QCoreApplication, QStandardPaths; app = QCoreApplication([]); app.setOrganizationName("AcademyTimetable"); app.setApplicationName("AcademyTimetable"); print(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation) + "/academy-timetable.sqlite3")'
-          if ($LASTEXITCODE -ne 0 -or !$db -or (Test-Path -LiteralPath $db)) {
-            throw 'Expected an unused app database path.'
-          }
-          $app = Start-Process -FilePath '.\dist\AcademyTimetable.exe' -PassThru
-          try {
-            for ($attempt = 0; $attempt -lt 60 -and !(Test-Path -LiteralPath $db); $attempt++) {
-              if ($app.HasExited) { throw "App exited with code $($app.ExitCode)." }
-              Start-Sleep -Seconds 1
-            }
-            if (!(Test-Path -LiteralPath $db)) { throw 'App did not initialize its database.' }
-            Start-Sleep -Seconds 2
-            if ($app.HasExited) { throw "App exited with code $($app.ExitCode)." }
-            & $python -c 'import sqlite3, sys; from pathlib import Path; from academy_timetable.db import SCHEMA_VERSION; db = sqlite3.connect(Path(sys.argv[1]).resolve().as_uri() + "?mode=ro", uri=True); assert db.execute("PRAGMA user_version").fetchone() == (SCHEMA_VERSION,); db.close()' $db
-            if ($LASTEXITCODE -ne 0) { throw 'App database did not reach the expected schema version.' }
-          } finally {
-            if (!$app.HasExited) { taskkill /PID $app.Id /T /F | Out-Null }
-          }
+        run: .\scripts\check-windows-install.ps1
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           path: dist/AcademyTimetable.exe
+          archive: false
+          if-no-files-found: error
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          path: dist/AcademyTimetable-Setup.exe
           archive: false
           if-no-files-found: error
 
@@ -123,7 +109,7 @@ jobs:
           if ! gh release view "$tag" >/dev/null 2>&1; then
             gh release create "$tag" --target "$GITHUB_SHA" --draft \
               --title "개발 확인용 실행 파일 ${GITHUB_SHA:0:7}" \
-              --notes 'GitHub 로그인과 Python 설치 없이 다운로드하고 실행할 수 있습니다. Windows x64는 AcademyTimetable.exe를 실행하고, Apple Silicon Mac은 zip 압축을 푼 뒤 학원 시간표.app을 실행하세요. 개발 확인용이며 Windows 배포 서명과 macOS 공증은 제공하지 않습니다.'
+              --notes 'GPT·GitHub 로그인과 별도 Python 설치 없이 사용할 수 있습니다. Windows 10 1809 이상 x64·Windows 11은 AcademyTimetable-Setup.exe를 열어 설치하고 완료 화면에서 앱을 실행하세요. Python 실행 환경이 포함되며 바탕화면·시작 메뉴 바로가기가 생성됩니다. AcademyTimetable.exe는 설치 없이 실행하는 파일입니다. Apple Silicon Mac은 zip 압축을 푼 뒤 학원 시간표.app을 실행하세요. Windows 배포 서명과 macOS 공증은 제공하지 않아 보안 경고가 나타날 수 있습니다.'
           fi
-          gh release upload "$tag" release/AcademyTimetable.exe release/AcademyTimetable-macOS-arm64.zip --clobber
+          gh release upload "$tag" release/AcademyTimetable-Setup.exe release/AcademyTimetable.exe release/AcademyTimetable-macOS-arm64.zip --clobber
           gh release edit "$tag" --draft=false --latest
